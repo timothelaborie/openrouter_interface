@@ -1,8 +1,8 @@
 {
-  "name": "openrouter-chat-ui",
+  "name": "openrouter_interface",
   "version": "0.1.0",
   "private": true,
-  "homepage": "https://timothelaborie.github.io/openrouter-chat-ui",
+  "homepage": "https://timothelaborie.github.io/openrouter_interface/",
   "dependencies": {
     "@types/node": "^16.18.68",
     "@types/react": "^18.2.42",
