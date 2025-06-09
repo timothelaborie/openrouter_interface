@@ -545,6 +545,7 @@ const ChatArea: React.FC<{
 }> = ({ chat, presets, onUpdateMessage, onDeleteMessage, onSendMessage, onPresetSelect, onOpenSettings, isLoading }) => {
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -553,6 +554,16 @@ const ChatArea: React.FC<{
   useEffect(() => {
     scrollToBottom();
   }, [chat?.messages]);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      const textarea = textareaRef.current;
+      textarea.style.height = 'auto';
+      const maxHeight = window.innerHeight * 0.9;
+      const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+      textarea.style.height = `${newHeight}px`;
+    }
+  }, [inputValue]);
 
   const handleSend = () => {
     const canSendEmpty = chat?.messages.length && chat.messages[chat.messages.length - 1].role === 'user';
@@ -603,7 +614,7 @@ const ChatArea: React.FC<{
       <div className="d-flex gap-2">
         <Form.Control
           as="textarea"
-          rows={3}
+          ref={textareaRef}
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           onKeyPress={(e) => {
@@ -614,6 +625,12 @@ const ChatArea: React.FC<{
           }}
           placeholder="Type your message..."
           disabled={isLoading}
+          style={{
+            minHeight: '38px',
+            maxHeight: `${window.innerHeight * 0.9}px`,
+            resize: 'none',
+            overflow: 'auto'
+          }}
         />
         <div className="d-flex flex-column gap-2">
           <Button
