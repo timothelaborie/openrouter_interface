@@ -63,6 +63,25 @@ const createDefaultPresets = (defaultModelId: string): Preset[] => {
   }));
 };
 
+// Helper function to check if a chat has a default name
+const hasDefaultName = (chat: Chat): boolean => {
+  return /^Chat \d+$/.test(chat.name);
+};
+
+// Helper function to update default chat names based on first user message
+const updateDefaultChatNames = (chats: Chat[]): Chat[] => {
+  return chats.map(chat => {
+    if (hasDefaultName(chat)) {
+      const firstUserMessage = chat.messages.find(msg => msg.role === 'user');
+      if (firstUserMessage && firstUserMessage.content.trim()) {
+        const newName = firstUserMessage.content.trim().substring(0, 20);
+        return { ...chat, name: newName };
+      }
+    }
+    return chat;
+  });
+};
+
 // Code block component with copy buttons
 const CodeBlock: React.FC<{ children: string; className?: string }> = ({ children, className }) => {
   const [copied, setCopied] = useState(false);
@@ -123,7 +142,7 @@ const ChatHistoryPanel: React.FC<{
     <div className="d-flex flex-column h-100 bg-light p-3">
       <h5 className="mb-3">Chat History</h5>
       <div className="flex-grow-1 overflow-auto">
-        {chats.map((chat) => (
+        {chats.slice().reverse().map((chat) => (
           <div
             key={chat.id}
             className={`p-2 mb-2 rounded cursor-pointer ${
@@ -653,6 +672,17 @@ function App() {
     if (presets.length > 0) localStorage.setItem('presets', JSON.stringify(presets));
   }, [presets]);
 
+  // Update default chat names on app launch
+  useEffect(() => {
+    if (chats.length > 0) {
+      const updatedChats = updateDefaultChatNames(chats);
+      const hasChanges = updatedChats.some((chat, index) => chat.name !== chats[index].name);
+      if (hasChanges) {
+        setChats(updatedChats);
+      }
+    }
+  }, []); // Run once on mount after chats are loaded
+
   // Fetch models on mount
   useEffect(() => {
     const fetchModels = async () => {
@@ -744,8 +774,15 @@ function App() {
     } else {
       updatedMessages = [...activeChat.messages, assistantMessage];
     }
+
+    // Update chat name if it has a default name and this is a user message
+    let updatedChatName = activeChat.name;
+    if (content && hasDefaultName(activeChat)) {
+      updatedChatName = content.trim().substring(0, 20);
+    }
+
     setChats(chats.map((chat) =>
-      chat.id === activeChat.id ? { ...chat, messages: updatedMessages } : chat
+      chat.id === activeChat.id ? { ...chat, messages: updatedMessages, name: updatedChatName } : chat
     ));
 
     setIsLoading(true);
