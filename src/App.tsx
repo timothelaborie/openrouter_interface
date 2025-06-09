@@ -555,14 +555,6 @@ const ChatArea: React.FC<{
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [chat?.messages]);
-
   useEffect(() => {
     if (textareaRef.current) {
       const textarea = textareaRef.current;
