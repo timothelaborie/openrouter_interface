@@ -201,8 +201,11 @@ const MessageItem: React.FC<{
   message: Message;
   onDelete: () => void;
   onCopy: () => void;
-}> = ({ message, onDelete, onCopy }) => {
+  onEdit: (content: string) => void;
+}> = ({ message, onDelete, onCopy, onEdit }) => {
   const [showMenu, setShowMenu] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(message.content);
 
   return (
     <div
@@ -241,27 +244,53 @@ const MessageItem: React.FC<{
               </ReactMarkdown>
             </div>
           )}
-          <div className="mt-2">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                code(props: any) {
-                  const { node, inline, className, children, ...rest } = props;
-                  const match = /language-(\w+)/.exec(className || '');
-                  return !inline && match ? (
-                    <CodeBlock className={className}>
-                      {String(children).replace(/\n$/, '')}
-                    </CodeBlock>
-                  ) : (
-                    <code className={className} {...rest}>
-                      {children}
-                    </code>
-                  );
-                },
-              }}
-            >
-              {message.content}
-            </ReactMarkdown>
+          <div className="mt-2" onDoubleClick={() => setIsEditing(true)}>
+            {isEditing ? (
+              <div>
+                <Form.Control
+                  as="textarea"
+                  rows={3}
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && e.ctrlKey) {
+                      onEdit(editContent);
+                      setIsEditing(false);
+                    } else if (e.key === 'Escape') {
+                      setEditContent(message.content);
+                      setIsEditing(false);
+                    }
+                  }}
+                  onBlur={() => {
+                    onEdit(editContent);
+                    setIsEditing(false);
+                  }}
+                  autoFocus
+                />
+                <small className="text-muted">Press Ctrl+Enter to save, Escape to cancel</small>
+              </div>
+            ) : (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  code(props: any) {
+                    const { node, inline, className, children, ...rest } = props;
+                    const match = /language-(\w+)/.exec(className || '');
+                    return !inline && match ? (
+                      <CodeBlock className={className}>
+                        {String(children).replace(/\n$/, '')}
+                      </CodeBlock>
+                    ) : (
+                      <code className={className} {...rest}>
+                        {children}
+                      </code>
+                    );
+                  },
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
+            )}
           </div>
         </div>
         {showMenu && (
@@ -539,6 +568,7 @@ const ChatArea: React.FC<{
             message={message}
             onDelete={() => onDeleteMessage(message.id)}
             onCopy={() => handleCopyMessage(message)}
+            onEdit={(content) => onUpdateMessage(message.id, content)}
           />
         ))}
         <div ref={messagesEndRef} />
