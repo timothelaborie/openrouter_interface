@@ -227,14 +227,19 @@ const MessageItem: React.FC<{
   const [editContent, setEditContent] = useState(message.content);
 
   return (
-    <div
-      className={`mb-3 p-3 rounded ${
-        message.role === 'user' ? 'bg-primary text-white' : 'bg-light'
-      }`}
-      onMouseEnter={() => setShowMenu(true)}
-      onMouseLeave={() => setShowMenu(false)}
-      style={{ position: 'relative' }}
-    >
+    <div className={`mb-3 d-flex ${message.role === 'user' ? 'justify-content-end' : 'justify-content-start'}`}>
+      <div
+        className={`p-3 rounded ${
+          message.role === 'user' ? 'text-white' : 'bg-light'
+        }`}
+        onMouseEnter={() => setShowMenu(true)}
+        onMouseLeave={() => setShowMenu(false)}
+        style={{
+          position: 'relative',
+          maxWidth: '90%',
+          backgroundColor: message.role === 'user' ? '#6f9bff' : undefined
+        }}
+      >
       <div className="d-flex justify-content-between align-items-start">
         <div className="flex-grow-1">
           <strong>{message.role === 'user' ? 'User' : 'Assistant'}:</strong>
@@ -322,6 +327,7 @@ const MessageItem: React.FC<{
             </Button>
             </div>
         )}
+      </div>
       </div>
     </div>
   );
