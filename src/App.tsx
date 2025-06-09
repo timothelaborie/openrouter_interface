@@ -530,7 +530,8 @@ const ChatArea: React.FC<{
   }, [chat?.messages]);
 
   const handleSend = () => {
-    if (inputValue.trim() && !isLoading) {
+    const canSendEmpty = chat?.messages.length && chat.messages[chat.messages.length - 1].role === 'user';
+    if ((inputValue.trim() || canSendEmpty) && !isLoading) {
       onSendMessage(inputValue.trim());
       setInputValue('');
     }
@@ -593,7 +594,7 @@ const ChatArea: React.FC<{
           <Button
             variant="primary"
             onClick={handleSend}
-            disabled={isLoading || !inputValue.trim()}
+            disabled={isLoading || (!inputValue.trim() && (!chat?.messages.length || chat.messages[chat.messages.length - 1].role !== 'user'))}
           >
             {isLoading ? 'Sending...' : 'Send'}
           </Button>
@@ -724,12 +725,6 @@ function App() {
     }
 
     const preset = presets[activeChat.activePresetIndex];
-    const userMessage: Message = {
-      id: uuidv4(),
-      role: 'user',
-      content,
-    };
-
     const assistantMessage: Message = {
       id: uuidv4(),
       role: 'assistant',
@@ -737,8 +732,18 @@ function App() {
       reasoning: '',
     };
 
-    // Add messages to chat
-    const updatedMessages = [...activeChat.messages, userMessage, assistantMessage];
+    // Only add user message if content is not empty
+    let updatedMessages:any;
+    if (content) {
+      const userMessage: Message = {
+        id: uuidv4(),
+        role: 'user',
+        content,
+      };
+      updatedMessages = [...activeChat.messages, userMessage, assistantMessage];
+    } else {
+      updatedMessages = [...activeChat.messages, assistantMessage];
+    }
     setChats(chats.map((chat) =>
       chat.id === activeChat.id ? { ...chat, messages: updatedMessages } : chat
     ));
@@ -747,9 +752,10 @@ function App() {
 
     try {
       // Prepare messages for API
+      const messagesForApi = updatedMessages.slice(0, -1); // Remove the assistant message we just added
       const apiMessages = preset.systemPrompt
-        ? [{ role: 'system', content: preset.systemPrompt }, ...updatedMessages.slice(0, -1)]
-        : updatedMessages.slice(0, -1);
+        ? [{ role: 'system', content: preset.systemPrompt }, ...messagesForApi]
+        : messagesForApi;
 
       // Prepare reasoning config
       const reasoningConfig: any = {};
