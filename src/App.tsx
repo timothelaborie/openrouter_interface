@@ -545,10 +545,12 @@ const ChatArea: React.FC<{
   onUpdateMessage: (messageId: string, content: string) => void;
   onDeleteMessage: (messageId: string) => void;
   onSendMessage: (content: string) => void;
+  onStopMessage: () => void;
   onPresetSelect: (index: number) => void;
   onOpenSettings: () => void;
   isLoading: boolean;
-}> = ({ chat, presets, onUpdateMessage, onDeleteMessage, onSendMessage, onPresetSelect, onOpenSettings, isLoading }) => {
+  isStreaming: boolean;
+}> = ({ chat, presets, onUpdateMessage, onDeleteMessage, onSendMessage, onStopMessage, onPresetSelect, onOpenSettings, isLoading, isStreaming }) => {
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -641,11 +643,11 @@ const ChatArea: React.FC<{
         />
         <div className="d-flex flex-column gap-2">
           <Button
-            variant="primary"
-            onClick={handleSend}
-            disabled={isLoading || (!inputValue.trim() && (!chat?.messages.length || chat.messages[chat.messages.length - 1].role !== 'user'))}
+            variant={isStreaming ? "danger" : "primary"}
+            onClick={isStreaming ? onStopMessage : handleSend}
+            disabled={!isStreaming && (isLoading || (!inputValue.trim() && (!chat?.messages.length || chat.messages[chat.messages.length - 1].role !== 'user')))}
           >
-            {isLoading ? 'Sending...' : 'Send'}
+            {isStreaming ? 'Stop' : isLoading ? 'Sending...' : 'Send'}
           </Button>
           <Button variant="secondary" onClick={onOpenSettings}>
             Settings
@@ -666,6 +668,8 @@ function App() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [isStreaming, setIsStreaming] = useState<boolean>(false);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   // Load data from localStorage on mount
   useEffect(() => {
@@ -778,6 +782,15 @@ function App() {
     ));
   };
 
+  const handleStopMessage = () => {
+    if (abortController) {
+      abortController.abort();
+      setAbortController(null);
+      setIsStreaming(false);
+      setIsLoading(false);
+    }
+  };
+
   const handleSendMessage = async (content: string) => {
     if (!activeChat || !apiKey) {
       alert('Please set your API key in settings');
@@ -815,7 +828,10 @@ function App() {
       chat.id === activeChat.id ? { ...chat, messages: updatedMessages, name: updatedChatName } : chat
     ));
 
+    const controller = new AbortController();
+    setAbortController(controller);
     setIsLoading(true);
+    setIsStreaming(true);
 
     try {
       // Prepare messages for API
@@ -855,6 +871,7 @@ function App() {
           'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify(requestBody),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -921,11 +938,17 @@ function App() {
           }
         }
       }
-    } catch (error) {
-      console.error('Failed to send message:', error);
-      alert('Failed to send message. Please check your API key and try again.');
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log('Request was aborted');
+      } else {
+        console.error('Failed to send message:', error);
+        alert('Failed to send message. Please check your API key and try again.');
+      }
     } finally {
       setIsLoading(false);
+      setIsStreaming(false);
+      setAbortController(null);
     }
   };
 
@@ -950,9 +973,11 @@ function App() {
             onUpdateMessage={handleUpdateMessage}
             onDeleteMessage={handleDeleteMessage}
             onSendMessage={handleSendMessage}
+            onStopMessage={handleStopMessage}
             onPresetSelect={handlePresetSelect}
             onOpenSettings={() => setShowSettingsModal(true)}
             isLoading={isLoading}
+            isStreaming={isStreaming}
           />
         </Col>
       </Row>
