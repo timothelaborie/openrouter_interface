@@ -586,23 +586,23 @@ const ChatArea: React.FC<{
 
   if (!chat) {
     return (
-      <div className="d-flex flex-column h-100 p-4">
-        <div className="flex-grow-1 d-flex align-items-center justify-content-center">
-          <h3 className="text-muted">Select or create a chat to begin</h3>
-        </div>
+      <div className="h-100 p-4 d-flex align-items-center justify-content-center">
+        <h3 className="text-muted">Select or create a chat to begin</h3>
       </div>
     );
   }
 
   return (
-    <div className="d-flex flex-column h-100 p-4">
-      <PresetBar
-        presets={presets}
-        activePresetIndex={chat.activePresetIndex}
-        onSelect={onPresetSelect}
-      />
+    <div className="h-100 p-4 position-relative">
+      <div style={{ marginBottom: '60px' }}>
+        <PresetBar
+          presets={presets}
+          activePresetIndex={chat.activePresetIndex}
+          onSelect={onPresetSelect}
+        />
+      </div>
 
-      <div className="flex-grow-1 overflow-auto mb-3">
+      <div className="overflow-auto" style={{ height: 'calc(100vh - 200px)', marginBottom: '20px' }}>
         {chat.messages.map((message) => (
           <MessageItem
             key={message.id}
@@ -615,7 +615,7 @@ const ChatArea: React.FC<{
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="d-flex gap-2">
+      <div className="d-flex gap-2 position-absolute bottom-0 start-0 end-0 p-4">
         <Form.Control
           as="textarea"
           ref={textareaRef}
@@ -633,7 +633,8 @@ const ChatArea: React.FC<{
             minHeight: '38px',
             maxHeight: `${window.innerHeight * 0.9}px`,
             resize: 'none',
-            overflow: 'auto'
+            overflow: 'auto',
+            zIndex: 999,
           }}
         />
         <div className="d-flex flex-column gap-2">
