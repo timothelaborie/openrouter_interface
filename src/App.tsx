@@ -222,7 +222,6 @@ const MessageItem: React.FC<{
   onCopy: () => void;
   onEdit: (content: string) => void;
 }> = ({ message, onDelete, onCopy, onEdit }) => {
-  const [showMenu, setShowMenu] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
 
@@ -232,8 +231,6 @@ const MessageItem: React.FC<{
         className={`p-3 rounded ${
           message.role === 'user' ? 'text-white' : 'bg-light'
         }`}
-        onMouseEnter={() => setShowMenu(true)}
-        onMouseLeave={() => setShowMenu(false)}
         style={{
           position: 'relative',
           maxWidth: '90%',
@@ -317,16 +314,14 @@ const MessageItem: React.FC<{
             )}
           </div>
         </div>
-        {showMenu && (
-          <div className="ms-2">
-            <Button size="sm" variant="secondary" className="me-1" onClick={onCopy}>
-              Copy
-            </Button>
-            <Button size="sm" variant="danger" onClick={onDelete}>
-              Delete
-            </Button>
-            </div>
-        )}
+        <div className="ms-2 d-flex flex-column gap-1">
+          <Button size="sm" variant="secondary" onClick={onCopy}>
+            Copy
+          </Button>
+          <Button size="sm" variant="danger" onClick={onDelete}>
+            Delete
+          </Button>
+        </div>
       </div>
       </div>
     </div>
