@@ -125,9 +125,10 @@ const ChatHistoryPanel: React.FC<{
   renamingChatId: string | null;
   onSelectChat: (chatId: string) => void;
   onRenameChat: (chatId: string, newName: string) => void;
+  onDeleteChat: (chatId: string) => void;
   onNewChat: () => void;
   onStartRename: (chatId: string) => void;
-}> = ({ chats, activeChatId, renamingChatId, onSelectChat, onRenameChat, onNewChat, onStartRename }) => {
+}> = ({ chats, activeChatId, renamingChatId, onSelectChat, onRenameChat, onDeleteChat, onNewChat, onStartRename }) => {
   const [tempName, setTempName] = useState('');
 
   const handleRenameSubmit = (chatId: string) => {
@@ -168,18 +169,33 @@ const ChatHistoryPanel: React.FC<{
             ) : (
               <div className="d-flex justify-content-between align-items-center">
                 <span>{chat.name}</span>
-                <Button
-                  size="sm"
-                  variant="link"
-                  className={`p-0 ${activeChatId === chat.id ? 'text-white' : 'text-secondary'}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setTempName(chat.name);
-                    onStartRename(chat.id);
-                  }}
-                >
-                  ✏️
-                </Button>
+                <div className="d-flex gap-1">
+                  {activeChatId === chat.id && (
+                    <Button
+                      size="sm"
+                      variant="link"
+                      className="p-0 text-danger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteChat(chat.id);
+                      }}
+                    >
+                      🗑️
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="link"
+                    className={`p-0 ${activeChatId === chat.id ? 'text-white' : 'text-secondary'}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTempName(chat.name);
+                      onStartRename(chat.id);
+                    }}
+                  >
+                    ✏️
+                  </Button>
+                </div>
               </div>
             )}
           </div>
@@ -750,6 +766,24 @@ function App() {
     setChats(chats.map((chat) => (chat.id === chatId ? { ...chat, name: newName } : chat)));
   };
 
+  const handleDeleteChat = (chatId: string) => {
+    const updatedChats = chats.filter((chat) => chat.id !== chatId);
+    setChats(updatedChats);
+
+    // If we deleted the active chat, select another one or set to null
+    if (activeChatId === chatId) {
+      if (updatedChats.length > 0) {
+        // Select the most recent chat
+        const newestChat = updatedChats.reduce((newest: Chat, current: Chat) =>
+          current.created > newest.created ? current : newest
+        );
+        setActiveChatId(newestChat.id);
+      } else {
+        setActiveChatId(null);
+      }
+    }
+  };
+
   const handleDeleteMessage = (messageId: string) => {
     if (!activeChat) return;
     const updatedMessages = activeChat.messages.filter((msg) => msg.id !== messageId);
@@ -955,6 +989,7 @@ function App() {
             renamingChatId={renamingChatId}
             onSelectChat={setActiveChatId}
             onRenameChat={handleRenameChat}
+            onDeleteChat={handleDeleteChat}
             onNewChat={handleCreateNewChat}
             onStartRename={setRenamingChatId}
           />
