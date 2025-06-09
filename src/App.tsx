@@ -594,7 +594,18 @@ function App() {
     const savedPresets = localStorage.getItem('presets');
 
     if (savedApiKey) setApiKey(savedApiKey);
-    if (savedChats) setChats(JSON.parse(savedChats));
+    if (savedChats) {
+      const parsedChats = JSON.parse(savedChats);
+      setChats(parsedChats);
+
+      // Select the newest chat (highest created timestamp)
+      if (parsedChats.length > 0) {
+        const newestChat = parsedChats.reduce((newest: Chat, current: Chat) =>
+          current.created > newest.created ? current : newest
+        );
+        setActiveChatId(newestChat.id);
+      }
+    }
     if (savedPresets) setPresets(JSON.parse(savedPresets));
   }, []);
 
