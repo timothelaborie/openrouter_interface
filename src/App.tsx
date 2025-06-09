@@ -631,8 +631,9 @@ function App() {
         const sortedModels = data.data.sort((a: ModelInfo, b: ModelInfo) => b.created - a.created);
         setModels(sortedModels);
 
-        // Initialize presets if not already set
-        if (presets.length === 0 && sortedModels.length > 0) {
+        // Initialize presets only if none exist and none were saved in localStorage
+        const savedPresets = localStorage.getItem('presets');
+        if (presets.length === 0 && !savedPresets && sortedModels.length > 0) {
           setPresets(createDefaultPresets(sortedModels[0].id));
         }
       } catch (error) {
@@ -641,7 +642,7 @@ function App() {
     };
 
     fetchModels();
-  }, []);
+  }, [presets.length]);
 
   const activeChat = chats.find((chat) => chat.id === activeChatId) || null;
 
