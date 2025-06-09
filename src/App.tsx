@@ -222,14 +222,15 @@ const MessageItem: React.FC<{
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
-                  code({ node, inline, className, children, ...props }) {
+                  code(props: any) {
+                    const { node, inline, className, children, ...rest } = props;
                     const match = /language-(\w+)/.exec(className || '');
                     return !inline && match ? (
                       <CodeBlock className={className}>
                         {String(children).replace(/\n$/, '')}
                       </CodeBlock>
                     ) : (
-                      <code className={className} {...props}>
+                      <code className={className} {...rest}>
                         {children}
                       </code>
                     );
@@ -244,14 +245,15 @@ const MessageItem: React.FC<{
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
-                code({ node, inline, className, children, ...props }) {
+                code(props: any) {
+                  const { node, inline, className, children, ...rest } = props;
                   const match = /language-(\w+)/.exec(className || '');
                   return !inline && match ? (
                     <CodeBlock className={className}>
                       {String(children).replace(/\n$/, '')}
                     </CodeBlock>
                   ) : (
-                    <code className={className} {...props}>
+                    <code className={className} {...rest}>
                       {children}
                     </code>
                   );
@@ -270,7 +272,7 @@ const MessageItem: React.FC<{
             <Button size="sm" variant="danger" onClick={onDelete}>
               Delete
             </Button>
-          </div>
+            </div>
         )}
       </div>
     </div>
@@ -529,7 +531,7 @@ const ChatArea: React.FC<{
         activePresetIndex={chat.activePresetIndex}
         onSelect={onPresetSelect}
       />
-      
+
       <div className="flex-grow-1 overflow-auto mb-3">
         {chat.messages.map((message) => (
           <MessageItem
@@ -651,7 +653,7 @@ function App() {
   const handleDeleteMessage = (messageId: string) => {
     if (!activeChat) return;
     const updatedMessages = activeChat.messages.filter((msg) => msg.id !== messageId);
-    setChats(chats.map((chat) => 
+    setChats(chats.map((chat) =>
       chat.id === activeChat.id ? { ...chat, messages: updatedMessages } : chat
     ));
   };
