@@ -54,11 +54,11 @@ const createDefaultPresets = (defaultModelId: string): Preset[] => {
     name: `Preset ${i + 1}`,
     modelId: defaultModelId,
     systemPrompt: '',
-    temperature: 1.0,
+    temperature: 0.0,
     topP: 1.0,
-    maxTokens: 4096,
+    maxTokens: 0,
     reasoningEffort: 'none',
-    reasoningMaxTokens: 2000,
+    reasoningMaxTokens: 0,
     reasoningExclude: false,
   }));
 };
