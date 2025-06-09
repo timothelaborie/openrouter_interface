@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/openrouter-chat-ui/static/css/main.2544e43a.css",
+    "main.js": "/openrouter-chat-ui/static/js/main.048364de.js",
+    "index.html": "/openrouter-chat-ui/index.html",
+    "main.2544e43a.css.map": "/openrouter-chat-ui/static/css/main.2544e43a.css.map",
+    "main.048364de.js.map": "/openrouter-chat-ui/static/js/main.048364de.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.2544e43a.css",
+    "static/js/main.048364de.js"
+  ]
+}
