@@ -734,11 +734,12 @@ function App() {
   const activeChat = chats.find((chat) => chat.id === activeChatId) || null;
 
   const handleCreateNewChat = () => {
+    const currentPresetIndex = activeChat?.activePresetIndex || 0;
     const newChat: Chat = {
       id: uuidv4(),
       name: `Chat ${chats.length + 1}`,
       messages: [],
-      activePresetIndex: 0,
+      activePresetIndex: currentPresetIndex,
       created: Date.now(),
     };
     setChats([...chats, newChat]);
