@@ -343,7 +343,8 @@ const SettingsModal: React.FC<{
   models: ModelInfo[];
   apiKey: string;
   setApiKey: React.Dispatch<React.SetStateAction<string>>;
-}> = ({ show, onHide, presets, setPresets, activePresetIndex, models, apiKey, setApiKey }) => {
+  onPresetIndexChange: (index: number) => void;
+}> = ({ show, onHide, presets, setPresets, activePresetIndex, models, apiKey, setApiKey, onPresetIndexChange }) => {
   const [selectedPresetIndex, setSelectedPresetIndex] = useState(activePresetIndex);
   const selectedPreset = presets[selectedPresetIndex];
   const selectedModel = models.find((m) => m.id === selectedPreset?.modelId);
@@ -380,7 +381,10 @@ const SettingsModal: React.FC<{
                 key={index}
                 variant={index === selectedPresetIndex ? 'primary' : 'outline-primary'}
                 size="sm"
-                onClick={() => setSelectedPresetIndex(index)}
+                onClick={() => {
+                  setSelectedPresetIndex(index);
+                  onPresetIndexChange(index);
+                }}
               >
                 {preset.name}
               </Button>
@@ -959,6 +963,7 @@ function App() {
         models={models}
         apiKey={apiKey}
         setApiKey={setApiKey}
+        onPresetIndexChange={handlePresetSelect}
       />
     </Container>
   );
