@@ -681,9 +681,9 @@ function App() {
 
   // Load data from localStorage on mount
   useEffect(() => {
-    const savedApiKey = localStorage.getItem('apiKey');
-    const savedChats = localStorage.getItem('chats');
-    const savedPresets = localStorage.getItem('presets');
+    const savedApiKey = localStorage.getItem('ORI_apiKey');
+    const savedChats = localStorage.getItem('ORI_chats');
+    const savedPresets = localStorage.getItem('ORI_presets');
 
     if (savedApiKey) setApiKey(savedApiKey);
     if (savedChats) {
@@ -703,15 +703,15 @@ function App() {
 
   // Save data to localStorage when it changes
   useEffect(() => {
-    if (apiKey) localStorage.setItem('apiKey', apiKey);
+    if (apiKey) localStorage.setItem('ORI_apiKey', apiKey);
   }, [apiKey]);
 
   useEffect(() => {
-    if (chats.length > 0) localStorage.setItem('chats', JSON.stringify(chats));
+    if (chats.length > 0) localStorage.setItem('ORI_chats', JSON.stringify(chats));
   }, [chats]);
 
   useEffect(() => {
-    if (presets.length > 0) localStorage.setItem('presets', JSON.stringify(presets));
+    if (presets.length > 0) localStorage.setItem('ORI_presets', JSON.stringify(presets));
   }, [presets]);
 
   // Update default chat names on app launch
@@ -735,7 +735,7 @@ function App() {
         setModels(sortedModels);
 
         // Initialize presets only if none exist and none were saved in localStorage
-        const savedPresets = localStorage.getItem('presets');
+        const savedPresets = localStorage.getItem('ORI_presets');
         if (presets.length === 0 && !savedPresets && sortedModels.length > 0) {
           setPresets(createDefaultPresets(sortedModels[0].id));
         }
