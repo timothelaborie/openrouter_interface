@@ -344,6 +344,13 @@ const SettingsModal: React.FC<{
   const selectedPreset = presets[selectedPresetIndex];
   const selectedModel = models.find((m) => m.id === selectedPreset?.modelId);
 
+  // Update selected preset when modal opens to show current chat's preset
+  useEffect(() => {
+    if (show) {
+      setSelectedPresetIndex(activePresetIndex);
+    }
+  }, [show, activePresetIndex]);
+
   const updatePreset = (field: keyof Preset, value: any) => {
     const newPresets = [...presets];
     newPresets[selectedPresetIndex] = { ...newPresets[selectedPresetIndex], [field]: value };
