@@ -103,7 +103,12 @@ const CodeBlock: React.FC<{ children: string; className?: string }> = ({ childre
       >
         {copied ? 'Copied!' : 'Copy'}
       </Button>
-      <SyntaxHighlighter language={language} style={vscDarkPlus}>
+      <SyntaxHighlighter
+        language={language}
+        style={vscDarkPlus}
+        lineProps={{style: {wordBreak: 'break-all', whiteSpace: 'pre-wrap'}}}
+        wrapLines={true}
+      >
         {children}
       </SyntaxHighlighter>
       <Button
@@ -568,6 +573,7 @@ const ChatArea: React.FC<{
   isStreaming: boolean;
 }> = ({ chat, presets, onUpdateMessage, onDeleteMessage, onSendMessage, onStopMessage, onPresetSelect, onOpenSettings, isLoading, isStreaming }) => {
   const [inputValue, setInputValue] = useState('');
+  const [shouldScrollToBottom, setShouldScrollToBottom] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -581,9 +587,17 @@ const ChatArea: React.FC<{
     }
   }, [inputValue]);
 
+  useEffect(() => {
+    if (shouldScrollToBottom && messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      setShouldScrollToBottom(false);
+    }
+  }, [shouldScrollToBottom, chat?.messages]);
+
   const handleSend = () => {
     const canSendEmpty = chat?.messages.length && chat.messages[chat.messages.length - 1].role === 'user';
     if ((inputValue.trim() || canSendEmpty) && !isLoading) {
+      setShouldScrollToBottom(true);
       onSendMessage(inputValue.trim());
       setInputValue('');
     }
@@ -627,7 +641,7 @@ const ChatArea: React.FC<{
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="d-flex gap-2 position-absolute bottom-0 start-0 end-0 p-4">
+      <div className="d-flex gap-2 position-absolute bottom-0 start-0 end-0 p-1">
         <Form.Control
           as="textarea"
           ref={textareaRef}
