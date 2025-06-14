@@ -26,6 +26,7 @@ interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   reasoning?: string;
+  messageType?: 'reasoning' | 'regular';
 }
 
 interface Chat {
@@ -246,11 +247,13 @@ const MessageItem: React.FC<{
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
 
+  const isReasoningMessage = message.messageType === 'reasoning';
+
   return (
     <div className={`mb-3 d-flex ${message.role === 'user' ? 'justify-content-end' : 'justify-content-start'}`}>
       <div
         className={`p-3 rounded ${
-          message.role === 'user' ? 'text-white' : 'bg-light'
+          message.role === 'user' ? 'text-white' : isReasoningMessage ? 'bg-secondary text-white' : 'bg-light'
         }`}
         style={{
           position: 'relative',
@@ -260,32 +263,7 @@ const MessageItem: React.FC<{
       >
       <div className="d-flex justify-content-between align-items-start">
         <div className="flex-grow-1">
-          <strong>{message.role === 'user' ? 'User' : 'Assistant'}:</strong>
-          {message.reasoning && !message.content && (
-            <div className="mt-2 p-2 bg-secondary text-white rounded">
-              <strong>Reasoning:</strong>
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  code(props: any) {
-                    const { node, inline, className, children, ...rest } = props;
-                    const match = /language-(\w+)/.exec(className || '');
-                    return !inline && match ? (
-                      <CodeBlock className={className}>
-                        {String(children).replace(/\n$/, '')}
-                      </CodeBlock>
-                    ) : (
-                      <code className={className} {...rest}>
-                        {children}
-                      </code>
-                    );
-                  },
-                }}
-              >
-                {message.reasoning}
-              </ReactMarkdown>
-            </div>
-          )}
+          <strong>{message.role === 'user' ? 'User' : isReasoningMessage ? 'Reasoning' : 'Assistant'}:</strong>
           <div className="mt-2" onDoubleClick={() => setIsEditing(true)}>
             {isEditing ? (
               <div>
@@ -330,7 +308,7 @@ const MessageItem: React.FC<{
                   },
                 }}
               >
-                {message.content}
+                {isReasoningMessage ? message.reasoning || '' : message.content}
               </ReactMarkdown>
             )}
           </div>
@@ -604,9 +582,9 @@ const ChatArea: React.FC<{
   };
 
   const handleCopyMessage = (message: Message) => {
-    const textToCopy = message.reasoning && message.content
-      ? `Reasoning:\n${message.reasoning}\n\nResponse:\n${message.content}`
-      : message.reasoning || message.content;
+    const textToCopy = message.messageType === 'reasoning'
+      ? message.reasoning || ''
+      : message.content;
     navigator.clipboard.writeText(textToCopy);
   };
 
@@ -838,25 +816,33 @@ function App() {
       return;
     }
 
+    // Remove all reasoning messages before sending new message
+    const messagesWithoutReasoning = activeChat.messages.filter(msg => msg.messageType !== 'reasoning');
+    setChats(chats.map((chat) =>
+      chat.id === activeChat.id ? { ...chat, messages: messagesWithoutReasoning } : chat
+    ));
+
     const preset = presets[activeChat.activePresetIndex];
     const assistantMessage: Message = {
       id: uuidv4(),
       role: 'assistant',
       content: '',
-      reasoning: '',
+      messageType: 'regular',
     };
 
     // Only add user message if content is not empty
-    let updatedMessages:any;
+    let updatedMessages: Message[];
+    const currentMessages = messagesWithoutReasoning;
     if (content) {
       const userMessage: Message = {
         id: uuidv4(),
         role: 'user',
         content,
+        messageType: 'regular',
       };
-      updatedMessages = [...activeChat.messages, userMessage, assistantMessage];
+      updatedMessages = [...currentMessages, userMessage, assistantMessage];
     } else {
-      updatedMessages = [...activeChat.messages, assistantMessage];
+      updatedMessages = [...currentMessages, assistantMessage];
     }
 
     // Update chat name if it has a default name and this is a user message
@@ -959,18 +945,41 @@ function App() {
 
               if (delta?.reasoning) {
                 setChats((prevChats) =>
-                  prevChats.map((chat) =>
-                    chat.id === activeChat.id
-                      ? {
+                  prevChats.map((chat) => {
+                    if (chat.id === activeChat.id) {
+                      // Find existing reasoning message or create new one
+                      const existingReasoningMsg = chat.messages.find(msg =>
+                        msg.messageType === 'reasoning' &&
+                        msg.id.startsWith('reasoning-')
+                      );
+
+                      if (existingReasoningMsg) {
+                        return {
                           ...chat,
                           messages: chat.messages.map((msg) =>
-                            msg.id === assistantMessage.id
+                            msg.id === existingReasoningMsg.id
                               ? { ...msg, reasoning: (msg.reasoning || '') + delta.reasoning }
                               : msg
                           ),
-                        }
-                      : chat
-                  )
+                        };
+                      } else {
+                        // Create new reasoning message
+                        const reasoningMessage: Message = {
+                          id: `reasoning-${uuidv4()}`,
+                          role: 'assistant',
+                          content: '',
+                          reasoning: delta.reasoning,
+                          messageType: 'reasoning',
+                        };
+                        // Insert reasoning message before the assistant message
+                        const assistantIndex = chat.messages.findIndex(msg => msg.id === assistantMessage.id);
+                        const newMessages = [...chat.messages];
+                        newMessages.splice(assistantIndex, 0, reasoningMessage);
+                        return { ...chat, messages: newMessages };
+                      }
+                    }
+                    return chat;
+                  })
                 );
               }
             } catch (e) {
