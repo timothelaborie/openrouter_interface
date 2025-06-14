@@ -243,7 +243,7 @@ const MessageItem: React.FC<{
   onDelete: () => void;
   onCopy: () => void;
   onEdit: (content: string) => void;
-}> = ({ message, onDelete, onCopy, onEdit }) => {
+}> = React.memo(({ message, onDelete, onCopy, onEdit }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
 
@@ -323,9 +323,9 @@ const MessageItem: React.FC<{
         </div>
       </div>
       </div>
-    </div>
+      </div>
   );
-};
+});
 
 // Settings Modal Component
 const SettingsModal: React.FC<{
@@ -547,9 +547,10 @@ const ChatArea: React.FC<{
   onStopMessage: () => void;
   onPresetSelect: (index: number) => void;
   onOpenSettings: () => void;
+  onAppend: (content: string) => void;
   isLoading: boolean;
   isStreaming: boolean;
-}> = ({ chat, presets, onUpdateMessage, onDeleteMessage, onSendMessage, onStopMessage, onPresetSelect, onOpenSettings, isLoading, isStreaming }) => {
+}> = ({ chat, presets, onUpdateMessage, onDeleteMessage, onSendMessage, onStopMessage, onPresetSelect, onOpenSettings, onAppend, isLoading, isStreaming }) => {
   const [inputValue, setInputValue] = useState('');
   const [shouldScrollToBottom, setShouldScrollToBottom] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -577,6 +578,20 @@ const ChatArea: React.FC<{
     if ((inputValue.trim() || canSendEmpty) && !isLoading) {
       setShouldScrollToBottom(true);
       onSendMessage(inputValue.trim());
+      setInputValue('');
+    }
+  };
+
+  const handleScrollToBottom = () => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  const handleAppend = () => {
+    if (!isLoading) {
+      setShouldScrollToBottom(true);
+      onAppend(inputValue);
       setInputValue('');
     }
   };
@@ -641,16 +656,28 @@ const ChatArea: React.FC<{
             zIndex: 999,
           }}
         />
-        <div className="d-flex flex-column gap-2">
+        <div className="d-flex flex-wrap gap-2" style={{ width: '180px' }}>
           <Button
             variant={isStreaming ? "danger" : "primary"}
             onClick={isStreaming ? onStopMessage : handleSend}
             disabled={!isStreaming && (isLoading || (!inputValue.trim() && (!chat?.messages.length || chat.messages[chat.messages.length - 1].role !== 'user')))}
+            style={{ width: 'calc(50% - 4px)' }}
           >
             {isStreaming ? 'Stop' : isLoading ? 'Sending...' : 'Send'}
           </Button>
-          <Button variant="secondary" onClick={onOpenSettings}>
+          <Button
+            variant="outline-primary"
+            onClick={handleAppend}
+            disabled={isLoading}
+            style={{ width: 'calc(50% - 4px)' }}
+          >
+            Append
+          </Button>
+          <Button variant="secondary" onClick={onOpenSettings} style={{ width: 'calc(50% - 4px)' }}>
             Settings
+          </Button>
+          <Button variant="outline-secondary" onClick={handleScrollToBottom} style={{ width: 'calc(50% - 4px)' }}>
+            ⇩
           </Button>
         </div>
       </div>
@@ -798,6 +825,33 @@ function App() {
     if (!activeChat) return;
     setChats(chats.map((chat) =>
       chat.id === activeChat.id ? { ...chat, activePresetIndex: index } : chat
+    ));
+  };
+
+  const handleAppendMessage = (content: string) => {
+    if (!activeChat) return;
+
+    // Determine the role for the new message
+    const lastMessage = activeChat.messages[activeChat.messages.length - 1];
+    const newRole = !lastMessage || lastMessage.role === 'assistant' ? 'user' : 'assistant';
+
+    const newMessage: Message = {
+      id: uuidv4(),
+      role: newRole,
+      content: content,
+      messageType: 'regular',
+    };
+
+    const updatedMessages = [...activeChat.messages, newMessage];
+
+    // Update chat name if it has a default name and this is a user message
+    let updatedChatName = activeChat.name;
+    if (content && newRole === 'user' && hasDefaultName(activeChat)) {
+      updatedChatName = content.trim().substring(0, 20);
+    }
+
+    setChats(chats.map((chat) =>
+      chat.id === activeChat.id ? { ...chat, messages: updatedMessages, name: updatedChatName } : chat
     ));
   };
 
@@ -1027,6 +1081,7 @@ function App() {
             onStopMessage={handleStopMessage}
             onPresetSelect={handlePresetSelect}
             onOpenSettings={() => setShowSettingsModal(true)}
+            onAppend={handleAppendMessage}
             isLoading={isLoading}
             isStreaming={isStreaming}
           />
