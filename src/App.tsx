@@ -268,13 +268,14 @@ const PresetBar: React.FC<{
   )
 }
 
-// Message Item Component - Updated to accept general handlers
+// Message Item Component
 const MessageItem: React.FC<{
   message: Message
   onDeleteMessage: (messageId: string) => void
   onCopyMessage: (message: Message) => void
   onUpdateMessage: (messageId: string, content: string) => void
-}> = React.memo(({ message, onDeleteMessage, onCopyMessage, onUpdateMessage }) => {
+  isStreaming: boolean
+}> = React.memo(({ message, onDeleteMessage, onCopyMessage, onUpdateMessage, isStreaming }) => {
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState(message.content)
 
@@ -324,7 +325,11 @@ const MessageItem: React.FC<{
                 : "Assistant"}
               :
             </strong>
-            <div className="mt-2" onDoubleClick={() => setIsEditing(true)}>
+            <div className="mt-2" onDoubleClick={() => {
+              if (!(isStreaming && message.role === "assistant")) {
+                setIsEditing(true)
+              }
+            }}>
               {isEditing ? (
                 <div>
                   <Form.Control
@@ -645,7 +650,7 @@ const SettingsModal: React.FC<{
   )
 }
 
-// Chat Area Component - Memoized
+// Chat Area Component
 const ChatArea: React.FC<{
   chat: Chat | null
   presets: Preset[]
@@ -755,6 +760,7 @@ const ChatArea: React.FC<{
             onDeleteMessage={onDeleteMessage}
             onCopyMessage={handleCopyMessage}
             onUpdateMessage={onUpdateMessage}
+            isStreaming={isStreaming}
           />
         ))}
         <div ref={messagesEndRef} />
@@ -939,7 +945,7 @@ function App() {
   const handleDeleteChat = useCallback((chatId: string) => {
     setChats(prev => {
       const updatedChats = prev.filter((chat) => chat.id !== chatId)
-      
+
       // If we deleted the active chat, select another one or set to null
       if (activeChatId === chatId) {
         if (updatedChats.length > 0) {
@@ -952,7 +958,7 @@ function App() {
           setActiveChatId(null)
         }
       }
-      
+
       return updatedChats
     })
   }, [activeChatId])
@@ -962,8 +968,8 @@ function App() {
     setChats(prev =>
       prev.map((chat) =>
         chat.id === activeChat.id
-          ? { 
-              ...chat, 
+          ? {
+              ...chat,
               messages: chat.messages.filter(msg => msg.id !== messageId)
             }
           : chat
@@ -1020,10 +1026,10 @@ function App() {
     setChats(prev =>
       prev.map((chat) =>
         chat.id === activeChat.id
-          ? { 
-              ...chat, 
-              messages: [...chat.messages, newMessage], 
-              name: updatedChatName 
+          ? {
+              ...chat,
+              messages: [...chat.messages, newMessage],
+              name: updatedChatName
             }
           : chat
       )
@@ -1049,7 +1055,7 @@ function App() {
     const messagesWithoutReasoning = activeChat.messages.filter(
       (msg) => msg.messageType !== "reasoning"
     )
-    
+
     const preset = presets[activeChat.activePresetIndex]
     const assistantMessage: Message = {
       id: uuidv4(),
