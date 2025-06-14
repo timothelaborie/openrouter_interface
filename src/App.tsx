@@ -268,17 +268,29 @@ const PresetBar: React.FC<{
   )
 }
 
-// Message Item Component
+// Message Item Component - Updated to accept general handlers
 const MessageItem: React.FC<{
   message: Message
-  onDelete: () => void
-  onCopy: () => void
-  onEdit: (content: string) => void
-}> = React.memo(({ message, onDelete, onCopy, onEdit }) => {
+  onDeleteMessage: (messageId: string) => void
+  onCopyMessage: (message: Message) => void
+  onUpdateMessage: (messageId: string, content: string) => void
+}> = React.memo(({ message, onDeleteMessage, onCopyMessage, onUpdateMessage }) => {
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState(message.content)
 
   const isReasoningMessage = message.messageType === "reasoning"
+
+  const handleDelete = useCallback(() => {
+    onDeleteMessage(message.id)
+  }, [onDeleteMessage, message.id])
+
+  const handleCopy = useCallback(() => {
+    onCopyMessage(message)
+  }, [onCopyMessage, message])
+
+  const handleEdit = useCallback((content: string) => {
+    onUpdateMessage(message.id, content)
+  }, [onUpdateMessage, message.id])
 
   return (
     <div
@@ -322,7 +334,7 @@ const MessageItem: React.FC<{
                     onChange={(e) => setEditContent(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && e.ctrlKey) {
-                        onEdit(editContent)
+                        handleEdit(editContent)
                         setIsEditing(false)
                       } else if (e.key === "Escape") {
                         setEditContent(message.content)
@@ -330,7 +342,7 @@ const MessageItem: React.FC<{
                       }
                     }}
                     onBlur={() => {
-                      onEdit(editContent)
+                      handleEdit(editContent)
                       setIsEditing(false)
                     }}
                     autoFocus
@@ -367,10 +379,10 @@ const MessageItem: React.FC<{
             </div>
           </div>
           <div className="ms-2 d-flex flex-column gap-1">
-            <Button size="sm" variant="secondary" onClick={onCopy}>
+            <Button size="sm" variant="secondary" onClick={handleCopy}>
               Copy
             </Button>
-            <Button size="sm" variant="danger" onClick={onDelete}>
+            <Button size="sm" variant="danger" onClick={handleDelete}>
               Delete
             </Button>
           </div>
@@ -633,7 +645,7 @@ const SettingsModal: React.FC<{
   )
 }
 
-// Chat Area Component
+// Chat Area Component - Memoized
 const ChatArea: React.FC<{
   chat: Chat | null
   presets: Preset[]
@@ -646,7 +658,7 @@ const ChatArea: React.FC<{
   onAppend: (content: string) => void
   isLoading: boolean
   isStreaming: boolean
-}> = ({
+}> = React.memo(({
   chat,
   presets,
   onUpdateMessage,
@@ -681,7 +693,7 @@ const ChatArea: React.FC<{
     }
   }, [shouldScrollToBottom, chat?.messages])
 
-  const handleSend = () => {
+  const handleSend = useCallback(() => {
     const canSendEmpty =
       chat?.messages.length &&
       chat.messages[chat.messages.length - 1].role === "user"
@@ -690,29 +702,29 @@ const ChatArea: React.FC<{
       onSendMessage(inputValue.trim())
       setInputValue("")
     }
-  }
+  }, [inputValue, chat?.messages, isLoading, onSendMessage])
 
-  const handleScrollToBottom = () => {
+  const handleScrollToBottom = useCallback(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" })
     }
-  }
+  }, [])
 
-  const handleAppend = () => {
+  const handleAppend = useCallback(() => {
     if (!isLoading) {
       setShouldScrollToBottom(true)
       onAppend(inputValue)
       setInputValue("")
     }
-  }
+  }, [inputValue, isLoading, onAppend])
 
-  const handleCopyMessage = (message: Message) => {
+  const handleCopyMessage = useCallback((message: Message) => {
     const textToCopy =
       message.messageType === "reasoning"
         ? message.reasoning || ""
         : message.content
     navigator.clipboard.writeText(textToCopy)
-  }
+  }, [])
 
   if (!chat) {
     return (
@@ -740,9 +752,9 @@ const ChatArea: React.FC<{
           <MessageItem
             key={message.id}
             message={message}
-            onDelete={() => onDeleteMessage(message.id)}
-            onCopy={() => handleCopyMessage(message)}
-            onEdit={(content) => onUpdateMessage(message.id, content)}
+            onDeleteMessage={onDeleteMessage}
+            onCopyMessage={handleCopyMessage}
+            onUpdateMessage={onUpdateMessage}
           />
         ))}
         <div ref={messagesEndRef} />
@@ -811,7 +823,7 @@ const ChatArea: React.FC<{
       </div>
     </div>
   )
-}
+})
 
 // Main App Component
 function App() {
@@ -903,7 +915,7 @@ function App() {
 
   const activeChat = chats.find((chat) => chat.id === activeChatId) || null
 
-  const handleCreateNewChat = () => {
+  const handleCreateNewChat = useCallback(() => {
     const currentPresetIndex = activeChat?.activePresetIndex || 0
     const newChat: Chat = {
       id: uuidv4(),
@@ -912,74 +924,79 @@ function App() {
       activePresetIndex: currentPresetIndex,
       created: Date.now(),
     }
-    setChats([...chats, newChat])
+    setChats(prev => [...prev, newChat])
     setActiveChatId(newChat.id)
-  }
+  }, [activeChat?.activePresetIndex, chats.length])
 
-  const handleRenameChat = (chatId: string, newName: string) => {
-    setChats(
-      chats.map((chat) =>
+  const handleRenameChat = useCallback((chatId: string, newName: string) => {
+    setChats(prev =>
+      prev.map((chat) =>
         chat.id === chatId ? { ...chat, name: newName } : chat
       )
     )
-  }
+  }, [])
 
-  const handleDeleteChat = (chatId: string) => {
-    const updatedChats = chats.filter((chat) => chat.id !== chatId)
-    setChats(updatedChats)
-
-    // If we deleted the active chat, select another one or set to null
-    if (activeChatId === chatId) {
-      if (updatedChats.length > 0) {
-        // Select the most recent chat
-        const newestChat = updatedChats.reduce((newest: Chat, current: Chat) =>
-          current.created > newest.created ? current : newest
-        )
-        setActiveChatId(newestChat.id)
-      } else {
-        setActiveChatId(null)
+  const handleDeleteChat = useCallback((chatId: string) => {
+    setChats(prev => {
+      const updatedChats = prev.filter((chat) => chat.id !== chatId)
+      
+      // If we deleted the active chat, select another one or set to null
+      if (activeChatId === chatId) {
+        if (updatedChats.length > 0) {
+          // Select the most recent chat
+          const newestChat = updatedChats.reduce((newest: Chat, current: Chat) =>
+            current.created > newest.created ? current : newest
+          )
+          setActiveChatId(newestChat.id)
+        } else {
+          setActiveChatId(null)
+        }
       }
-    }
-  }
+      
+      return updatedChats
+    })
+  }, [activeChatId])
 
-  const handleDeleteMessage = (messageId: string) => {
+  const handleDeleteMessage = useCallback((messageId: string) => {
     if (!activeChat) return
-    const updatedMessages = activeChat.messages.filter(
-      (msg) => msg.id !== messageId
-    )
-    setChats(
-      chats.map((chat) =>
+    setChats(prev =>
+      prev.map((chat) =>
         chat.id === activeChat.id
-          ? { ...chat, messages: updatedMessages }
+          ? { 
+              ...chat, 
+              messages: chat.messages.filter(msg => msg.id !== messageId)
+            }
           : chat
       )
     )
-  }
+  }, [activeChat])
 
-  const handleUpdateMessage = (messageId: string, content: string) => {
+  const handleUpdateMessage = useCallback((messageId: string, content: string) => {
     if (!activeChat) return
-    const updatedMessages = activeChat.messages.map((msg) =>
-      msg.id === messageId ? { ...msg, content } : msg
-    )
-    setChats(
-      chats.map((chat) =>
+    setChats(prev =>
+      prev.map((chat) =>
         chat.id === activeChat.id
-          ? { ...chat, messages: updatedMessages }
+          ? {
+              ...chat,
+              messages: chat.messages.map((msg) =>
+                msg.id === messageId ? { ...msg, content } : msg
+              ),
+            }
           : chat
       )
     )
-  }
+  }, [activeChat])
 
-  const handlePresetSelect = (index: number) => {
+  const handlePresetSelect = useCallback((index: number) => {
     if (!activeChat) return
-    setChats(
-      chats.map((chat) =>
+    setChats(prev =>
+      prev.map((chat) =>
         chat.id === activeChat.id ? { ...chat, activePresetIndex: index } : chat
       )
     )
-  }
+  }, [activeChat])
 
-  const handleAppendMessage = (content: string) => {
+  const handleAppendMessage = useCallback((content: string) => {
     if (!activeChat) return
 
     // Determine the role for the new message
@@ -994,33 +1011,35 @@ function App() {
       messageType: "regular",
     }
 
-    const updatedMessages = [...activeChat.messages, newMessage]
-
     // Update chat name if it has a default name and this is a user message
     let updatedChatName = activeChat.name
     if (content && newRole === "user" && hasDefaultName(activeChat)) {
       updatedChatName = content.trim().substring(0, 20)
     }
 
-    setChats(
-      chats.map((chat) =>
+    setChats(prev =>
+      prev.map((chat) =>
         chat.id === activeChat.id
-          ? { ...chat, messages: updatedMessages, name: updatedChatName }
+          ? { 
+              ...chat, 
+              messages: [...chat.messages, newMessage], 
+              name: updatedChatName 
+            }
           : chat
       )
     )
-  }
+  }, [activeChat])
 
-  const handleStopMessage = () => {
+  const handleStopMessage = useCallback(() => {
     if (abortController) {
       abortController.abort()
       setAbortController(null)
       setIsStreaming(false)
       setIsLoading(false)
     }
-  }
+  }, [abortController])
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = useCallback(async (content: string) => {
     if (!activeChat || !apiKey) {
       alert("Please set your API key in settings")
       return
@@ -1030,14 +1049,7 @@ function App() {
     const messagesWithoutReasoning = activeChat.messages.filter(
       (msg) => msg.messageType !== "reasoning"
     )
-    setChats(
-      chats.map((chat) =>
-        chat.id === activeChat.id
-          ? { ...chat, messages: messagesWithoutReasoning }
-          : chat
-      )
-    )
-
+    
     const preset = presets[activeChat.activePresetIndex]
     const assistantMessage: Message = {
       id: uuidv4(),
@@ -1067,8 +1079,8 @@ function App() {
       updatedChatName = content.trim().substring(0, 20)
     }
 
-    setChats(
-      chats.map((chat) =>
+    setChats(prev =>
+      prev.map((chat) =>
         chat.id === activeChat.id
           ? { ...chat, messages: updatedMessages, name: updatedChatName }
           : chat
@@ -1232,7 +1244,7 @@ function App() {
       setIsStreaming(false)
       setAbortController(null)
     }
-  }
+  }, [activeChat, apiKey, presets])
 
   return (
     <Container fluid className="vh-100 p-0">
