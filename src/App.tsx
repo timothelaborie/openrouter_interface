@@ -766,7 +766,7 @@ const ChatArea: React.FC<{
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="d-flex gap-2 position-absolute bottom-0 start-0 end-0 p-1">
+      <div className="d-flex gap-2 align-items-end position-absolute bottom-0 start-0 end-0 p-1">
         <Form.Control
           as="textarea"
           ref={textareaRef}
