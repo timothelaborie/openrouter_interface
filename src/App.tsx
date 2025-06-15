@@ -34,7 +34,7 @@ interface ModelInfo {
 interface Message {
   id: string
   role: "user" | "assistant" | "system"
-  content: string
+  content: string | Array<{type: 'text', text: string} | {type: 'image_url', image_url: {url: string}}>
   reasoning?: string
   messageType?: "reasoning" | "regular"
 }
@@ -84,12 +84,22 @@ const updateDefaultChatNames = (chats: Chat[]): Chat[] => {
   return chats.map((chat) => {
     if (hasDefaultName(chat)) {
       const firstUserMessage = chat.messages.find((msg) => msg.role === "user")
-      if (firstUserMessage && firstUserMessage.content.trim()) {
+      if (firstUserMessage && typeof firstUserMessage.content === "string" && firstUserMessage.content.trim()) {
         const newName = firstUserMessage.content.trim().substring(0, 20)
         return { ...chat, name: newName }
       }
     }
     return chat
+  })
+}
+
+// Helper function to convert image file to base64
+const imageToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
   })
 }
 
@@ -277,9 +287,10 @@ const MessageItem: React.FC<{
   isStreaming: boolean
 }> = React.memo(({ message, onDeleteMessage, onCopyMessage, onUpdateMessage, isStreaming }) => {
   const [isEditing, setIsEditing] = useState(false)
-  const [editContent, setEditContent] = useState(message.content)
+  const [editContent, setEditContent] = useState(typeof message.content === "string" ? message.content : "")
 
   const isReasoningMessage = message.messageType === "reasoning"
+  const hasImageContent = Array.isArray(message.content) && message.content.some(item => item.type === "image_url")
 
   const handleDelete = useCallback(() => {
     onDeleteMessage(message.id)
@@ -326,7 +337,7 @@ const MessageItem: React.FC<{
               :
             </strong>
             <div className="mt-2" onDoubleClick={() => {
-              if (!(isStreaming && message.role === "assistant")) {
+              if (!(isStreaming && message.role === "assistant") && !hasImageContent) {
                 setIsEditing(true)
               }
             }}>
@@ -342,7 +353,7 @@ const MessageItem: React.FC<{
                         handleEdit(editContent)
                         setIsEditing(false)
                       } else if (e.key === "Escape") {
-                        setEditContent(message.content)
+                        setEditContent(typeof message.content === "string" ? message.content : "")
                         setIsEditing(false)
                       }
                     }}
@@ -357,29 +368,65 @@ const MessageItem: React.FC<{
                   </small>
                 </div>
               ) : (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    code(props: any) {
-                      const { node, inline, className, children, ...rest } =
-                        props
-                      const match = /language-(\w+)/.exec(className || "")
-                      return !inline && match ? (
-                        <CodeBlock className={className}>
-                          {String(children).replace(/\n$/, "")}
-                        </CodeBlock>
-                      ) : (
-                        <code className={className} {...rest}>
-                          {children}
-                        </code>
-                      )
-                    },
-                  }}
-                >
-                  {isReasoningMessage
-                    ? message.reasoning || ""
-                    : message.content}
-                </ReactMarkdown>
+                <div>
+                  {Array.isArray(message.content) ? (
+                    message.content.map((item, index) => (
+                      <div key={index} className="mb-2">
+                        {item.type === "text" ? (
+                          <ReactMarkdown
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              code(props: any) {
+                                const { node, inline, className, children, ...rest } = props
+                                const match = /language-(\w+)/.exec(className || "")
+                                return !inline && match ? (
+                                  <CodeBlock className={className}>
+                                    {String(children).replace(/\n$/, "")}
+                                  </CodeBlock>
+                                ) : (
+                                  <code className={className} {...rest}>
+                                    {children}
+                                  </code>
+                                )
+                              },
+                            }}
+                          >
+                            {item.text}
+                          </ReactMarkdown>
+                        ) : item.type === "image_url" ? (
+                          <img
+                            src={item.image_url.url}
+                            alt="Pasted image"
+                            style={{ maxWidth: "100%", height: "auto", borderRadius: "8px" }}
+                          />
+                        ) : null}
+                      </div>
+                    ))
+                  ) : (
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        code(props: any) {
+                          const { node, inline, className, children, ...rest } = props
+                          const match = /language-(\w+)/.exec(className || "")
+                          return !inline && match ? (
+                            <CodeBlock className={className}>
+                              {String(children).replace(/\n$/, "")}
+                            </CodeBlock>
+                          ) : (
+                            <code className={className} {...rest}>
+                              {children}
+                            </code>
+                          )
+                        },
+                      }}
+                    >
+                      {isReasoningMessage
+                        ? message.reasoning || ""
+                        : message.content as string}
+                    </ReactMarkdown>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -663,6 +710,7 @@ const ChatArea: React.FC<{
   onAppend: (content: string) => void
   isLoading: boolean
   isStreaming: boolean
+  setChats: React.Dispatch<React.SetStateAction<Chat[]>>
 }> = React.memo(({
   chat,
   presets,
@@ -675,6 +723,7 @@ const ChatArea: React.FC<{
   onAppend,
   isLoading,
   isStreaming,
+  setChats,
 }) => {
   const [inputValue, setInputValue] = useState("")
   const [shouldScrollToBottom, setShouldScrollToBottom] = useState(false)
@@ -724,10 +773,18 @@ const ChatArea: React.FC<{
   }, [inputValue, isLoading, onAppend])
 
   const handleCopyMessage = useCallback((message: Message) => {
-    const textToCopy =
-      message.messageType === "reasoning"
-        ? message.reasoning || ""
-        : message.content
+    let textToCopy = ""
+    if (message.messageType === "reasoning") {
+      textToCopy = message.reasoning || ""
+    } else if (typeof message.content === "string") {
+      textToCopy = message.content
+    } else {
+      // For array content, copy only text parts
+      textToCopy = message.content
+        .filter(item => item.type === "text")
+        .map(item => (item as any).text)
+        .join("\n")
+    }
     navigator.clipboard.writeText(textToCopy)
   }, [])
 
@@ -776,6 +833,47 @@ const ChatArea: React.FC<{
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
               handleSend()
+            }
+          }}
+          onPaste={async (e) => {
+            const items = e.clipboardData?.items
+            if (items) {
+              for (let i = 0; i < items.length; i++) {
+                const item = items[i]
+                if (item.type.indexOf("image") !== -1) {
+                  e.preventDefault()
+                  const file = item.getAsFile()
+                  if (file) {
+                    try {
+                      const base64Image = await imageToBase64(file)
+                      const imageMessage: Message = {
+                        id: uuidv4(),
+                        role: "user",
+                        content: [{
+                          type: "image_url",
+                          image_url: {
+                            url: base64Image
+                          }
+                        }],
+                        messageType: "regular",
+                      }
+                      onAppend("")
+                      if (chat) {
+                        setChats(prev =>
+                          prev.map((c) =>
+                            c.id === chat.id
+                              ? { ...c, messages: [...c.messages.slice(0, -1), imageMessage] }
+                              : c
+                          )
+                        )
+                      }
+                    } catch (error) {
+                      console.error("Failed to process image:", error)
+                    }
+                  }
+                  break
+                }
+              }
             }
           }}
           placeholder="Type your message..."
@@ -1100,7 +1198,10 @@ function App() {
 
     try {
       // Prepare messages for API
-      const messagesForApi = updatedMessages.slice(0, -1) // Remove the assistant message we just added
+      const messagesForApi = updatedMessages.slice(0, -1).map(msg => ({
+        role: msg.role,
+        content: msg.content
+      })) // Remove the assistant message we just added
       const apiMessages = preset.systemPrompt
         ? [{ role: "system", content: preset.systemPrompt }, ...messagesForApi]
         : messagesForApi
@@ -1280,6 +1381,7 @@ function App() {
             onAppend={handleAppendMessage}
             isLoading={isLoading}
             isStreaming={isStreaming}
+            setChats={setChats}
           />
         </Col>
       </Row>
