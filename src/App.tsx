@@ -286,11 +286,36 @@ const MessageItem: React.FC<{
   onUpdateMessage: (messageId: string, content: string) => void
   isStreaming: boolean
 }> = React.memo(({ message, onDeleteMessage, onCopyMessage, onUpdateMessage, isStreaming }) => {
-  const [isEditing, setIsEditing] = useState(false)
-  const [editContent, setEditContent] = useState(typeof message.content === "string" ? message.content : "")
-
   const isReasoningMessage = message.messageType === "reasoning"
   const hasImageContent = Array.isArray(message.content) && message.content.some(item => item.type === "image_url")
+
+  // Determine the correct content to edit
+  const getEditableContent = () => {
+    if (isReasoningMessage) {
+      return message.reasoning || ""
+    }
+    if (typeof message.content === "string") {
+      return message.content
+    }
+    // For array content, get text parts only
+    if (Array.isArray(message.content)) {
+      return message.content
+        .filter(item => item.type === "text")
+        .map(item => (item as any).text)
+        .join("\n")
+    }
+    return ""
+  }
+
+  const [isEditing, setIsEditing] = useState(false)
+  const [editContent, setEditContent] = useState(getEditableContent())
+
+  // Update editContent when message content changes (e.g., during streaming)
+  useEffect(() => {
+    if (!isEditing) {
+      setEditContent(getEditableContent())
+    }
+  }, [message.content, message.reasoning, isEditing])
 
   const handleDelete = useCallback(() => {
     onDeleteMessage(message.id)
