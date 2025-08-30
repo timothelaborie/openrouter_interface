@@ -869,10 +869,11 @@ const ChatArea: React.FC<{
       </div>
 
       <div className="d-flex gap-2 align-items-end position-absolute bottom-0 start-0 end-0 p-1">
-        <Dropdown show={showEmojiPicker} onToggle={setShowEmojiPicker}>
+        <Dropdown show={showEmojiPicker} onToggle={(isOpen) => setShowEmojiPicker(isOpen)}>
           <Dropdown.Toggle
             variant="outline-secondary"
             size="sm"
+            id="emoji-dropdown"
             style={{
               minWidth: "40px",
               height: "38px",
@@ -883,23 +884,25 @@ const ChatArea: React.FC<{
           >
             😀
           </Dropdown.Toggle>
-          <Dropdown.Menu style={{ maxHeight: "200px", overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(10, 1fr)", gap: "2px", padding: "8px" }}>
-            {emojis.map((emoji, index) => (
-              <Dropdown.Item
-                key={index}
-                onClick={() => handleEmojiSelect(emoji)}
-                style={{
-                  padding: "4px",
-                  textAlign: "center",
-                  border: "none",
-                  background: "none",
-                  fontSize: "18px",
-                  cursor: "pointer"
-                }}
-              >
-                {emoji}
-              </Dropdown.Item>
-            ))}
+          <Dropdown.Menu>
+            <div style={{ maxHeight: "200px", overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(10, 1fr)", gap: "2px", padding: "8px" }}>
+              {emojis.map((emoji, index) => (
+                <Dropdown.Item
+                  key={index}
+                  onClick={() => handleEmojiSelect(emoji)}
+                  style={{
+                    padding: "4px",
+                    textAlign: "center",
+                    border: "none",
+                    background: "none",
+                    fontSize: "18px",
+                    cursor: "pointer"
+                  }}
+                >
+                  {emoji}
+                </Dropdown.Item>
+              ))}
+            </div>
           </Dropdown.Menu>
         </Dropdown>
         <Form.Control
