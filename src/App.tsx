@@ -65,49 +65,6 @@ const getItem = async (key: string): Promise<any> => {
   })
 }
 
-const migrateFromLocalStorage = async (): Promise<void> => {
-  try {
-    // Check if we've already migrated
-    const migrationDone = await getItem("ORI_migrationDone")
-    if (migrationDone) {
-      console.log("Migration already completed")
-      return
-    }
-
-    console.log("Starting migration from localStorage to IndexedDB...")
-
-    // Migrate API Key
-    const savedApiKey = localStorage.getItem("ORI_apiKey")
-    if (savedApiKey) {
-      await setItem("ORI_apiKey", savedApiKey)
-      console.log("Migrated API key")
-    }
-
-    // Migrate Chats
-    const savedChats = localStorage.getItem("ORI_chats")
-    if (savedChats) {
-      const parsedChats = JSON.parse(savedChats)
-      await setItem("ORI_chats", parsedChats)
-      console.log(`Migrated ${parsedChats.length} chats`)
-    }
-
-    // Migrate Presets
-    const savedPresets = localStorage.getItem("ORI_presets")
-    if (savedPresets) {
-      const parsedPresets = JSON.parse(savedPresets)
-      await setItem("ORI_presets", parsedPresets)
-      console.log(`Migrated ${parsedPresets.length} presets`)
-    }
-
-    // Mark migration as complete
-    await setItem("ORI_migrationDone", true)
-    console.log("Migration completed successfully!")
-    
-  } catch (error) {
-    console.error("Migration failed:", error)
-  }
-}
-
 // TypeScript Interfaces
 interface ModelInfo {
   id: string
@@ -1225,10 +1182,6 @@ function App() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        // Run migration first
-        await migrateFromLocalStorage()
-
-        // Then load data from IndexedDB as usual
         const savedApiKey = await getItem("ORI_apiKey")
         const savedChats = await getItem("ORI_chats")
         const savedPresets = await getItem("ORI_presets")
@@ -1247,7 +1200,7 @@ function App() {
         }
         if (savedPresets) setPresets(savedPresets)
       } catch (error) {
-        console.error("Failed to load data:", error)
+        console.error("Failed to load data from IndexedDB:", error)
       }
     }
 
