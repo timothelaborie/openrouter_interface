@@ -967,7 +967,7 @@ const ChatArea: React.FC<{
             zIndex: 999,
           }}
         />
-        <div className="d-flex flex-wrap gap-2" style={{ width: "180px" }}>
+        <div className="d-flex flex-wrap gap-2" style={{ width: "230px" }}>
           <Button
             variant={isStreaming ? "danger" : "primary"}
             onClick={isStreaming ? onStopMessage : handleSend}
