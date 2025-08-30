@@ -754,6 +754,18 @@ const ChatArea: React.FC<{
   const [shouldScrollToBottom, setShouldScrollToBottom] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+
+  const emojis = [
+    "😀", "😃", "😄", "😁", "😆", "😅", "🤣", "😂", "🙂", "🙃",
+    "😉", "😊", "😇", "🥰", "😍", "🤩", "😘", "😗", "😚", "😙",
+    "😋", "😛", "😜", "🤪", "😝", "🤑", "🤗", "🤭", "🤫", "🤔",
+    "🤐", "🤨", "😐", "😑", "😶", "😏", "😒", "🙄", "😬", "🤥",
+    "😔", "😕", "🙁", "☹️", "😣", "😖", "😫", "😩", "🥺", "😢",
+    "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔",
+    "👍", "👎", "👌", "🤞", "✌️", "🤟", "🤘", "👊", "✊", "🤛",
+    "🔥", "💯", "💥", "⚡", "🌟", "⭐", "🎉", "🎊", "🎈", "🎁"
+  ]
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -796,6 +808,14 @@ const ChatArea: React.FC<{
       setInputValue("")
     }
   }, [inputValue, isLoading, onAppend])
+
+  const handleEmojiSelect = useCallback((emoji: string) => {
+    setInputValue(prev => prev + emoji)
+    setShowEmojiPicker(false)
+    if (textareaRef.current) {
+      textareaRef.current.focus()
+    }
+  }, [])
 
   const handleCopyMessage = useCallback((message: Message) => {
     let textToCopy = ""
@@ -849,6 +869,39 @@ const ChatArea: React.FC<{
       </div>
 
       <div className="d-flex gap-2 align-items-end position-absolute bottom-0 start-0 end-0 p-1">
+        <Dropdown show={showEmojiPicker} onToggle={setShowEmojiPicker}>
+          <Dropdown.Toggle
+            variant="outline-secondary"
+            size="sm"
+            style={{
+              minWidth: "40px",
+              height: "38px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center"
+            }}
+          >
+            😀
+          </Dropdown.Toggle>
+          <Dropdown.Menu style={{ maxHeight: "200px", overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(10, 1fr)", gap: "2px", padding: "8px" }}>
+            {emojis.map((emoji, index) => (
+              <Dropdown.Item
+                key={index}
+                onClick={() => handleEmojiSelect(emoji)}
+                style={{
+                  padding: "4px",
+                  textAlign: "center",
+                  border: "none",
+                  background: "none",
+                  fontSize: "18px",
+                  cursor: "pointer"
+                }}
+              >
+                {emoji}
+              </Dropdown.Item>
+            ))}
+          </Dropdown.Menu>
+        </Dropdown>
         <Form.Control
           as="textarea"
           ref={textareaRef}
