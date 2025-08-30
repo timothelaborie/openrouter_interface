@@ -57,6 +57,12 @@ interface Preset {
   reasoningEffort: "low" | "medium" | "high" | "none"
   reasoningMaxTokens: number
   reasoningExclude: boolean
+  providerMode: "default" | "order" | "only" | "ignore" | "sort"
+  providerOrder: string
+  providerOnly: string
+  providerIgnore: string
+  providerSort: "price" | "throughput" | "latency"
+  allowFallbacks: boolean
 }
 
 // Helper function to create default presets
@@ -71,6 +77,12 @@ const createDefaultPresets = (defaultModelId: string): Preset[] => {
     reasoningEffort: "none",
     reasoningMaxTokens: 0,
     reasoningExclude: false,
+    providerMode: "default",
+    providerOrder: "",
+    providerOnly: "",
+    providerIgnore: "",
+    providerSort: "price",
+    allowFallbacks: true,
   }))
 }
 
@@ -686,6 +698,100 @@ const SettingsModal: React.FC<{
                   </Form.Group>
                 </Col>
               </Row>
+
+              <h6>Provider Settings</h6>
+              <Row>
+                <Col md={4}>
+                  <Form.Group className="mb-3">
+                    <Form.Label>Provider Mode</Form.Label>
+                    <Form.Select
+                      value={selectedPreset.providerMode}
+                      onChange={(e) =>
+                        updatePreset("providerMode", e.target.value)
+                      }
+                    >
+                      <option value="default">Default (Load Balanced)</option>
+                      <option value="order">Specific Order</option>
+                      <option value="only">Only Allow</option>
+                      <option value="ignore">Ignore Providers</option>
+                      <option value="sort">Sort by Metric</option>
+                    </Form.Select>
+                  </Form.Group>
+                </Col>
+                <Col md={4}>
+                  <Form.Group className="mb-3">
+                    <Form.Label>Allow Fallbacks</Form.Label>
+                    <Form.Check
+                      type="checkbox"
+                      checked={selectedPreset.allowFallbacks}
+                      onChange={(e) =>
+                        updatePreset("allowFallbacks", e.target.checked)
+                      }
+                      label="Allow fallback providers"
+                      disabled={selectedPreset.providerMode === "default"}
+                    />
+                  </Form.Group>
+                </Col>
+              </Row>
+
+              {selectedPreset.providerMode === "order" && (
+                <Form.Group className="mb-3">
+                  <Form.Label>Provider Order</Form.Label>
+                  <Form.Control
+                    type="text"
+                    value={selectedPreset.providerOrder}
+                    onChange={(e) => updatePreset("providerOrder", e.target.value)}
+                    placeholder="e.g. openai,anthropic,together (comma-separated)"
+                  />
+                  <Form.Text className="text-muted">
+                    Comma-separated list of providers in order of preference
+                  </Form.Text>
+                </Form.Group>
+              )}
+
+              {selectedPreset.providerMode === "only" && (
+                <Form.Group className="mb-3">
+                  <Form.Label>Only Allow Providers</Form.Label>
+                  <Form.Control
+                    type="text"
+                    value={selectedPreset.providerOnly}
+                    onChange={(e) => updatePreset("providerOnly", e.target.value)}
+                    placeholder="e.g. openai,anthropic (comma-separated)"
+                  />
+                  <Form.Text className="text-muted">
+                    Only use these providers for requests
+                  </Form.Text>
+                </Form.Group>
+              )}
+
+              {selectedPreset.providerMode === "ignore" && (
+                <Form.Group className="mb-3">
+                  <Form.Label>Ignore Providers</Form.Label>
+                  <Form.Control
+                    type="text"
+                    value={selectedPreset.providerIgnore}
+                    onChange={(e) => updatePreset("providerIgnore", e.target.value)}
+                    placeholder="e.g. provider1,provider2 (comma-separated)"
+                  />
+                  <Form.Text className="text-muted">
+                    Skip these providers for requests
+                  </Form.Text>
+                </Form.Group>
+              )}
+
+              {selectedPreset.providerMode === "sort" && (
+                <Form.Group className="mb-3">
+                  <Form.Label>Sort by Metric</Form.Label>
+                  <Form.Select
+                    value={selectedPreset.providerSort}
+                    onChange={(e) => updatePreset("providerSort", e.target.value)}
+                  >
+                    <option value="price">Price (Cheapest First)</option>
+                    <option value="throughput">Throughput (Fastest First)</option>
+                    <option value="latency">Latency (Lowest First)</option>
+                  </Form.Select>
+                </Form.Group>
+              )}
 
               <Row>
                 <Col md={6}>
@@ -1309,6 +1415,27 @@ function App() {
 
       if (Object.keys(reasoningConfig).length > 0) {
         requestBody.reasoning = reasoningConfig
+      }
+
+      // Add provider configuration
+      if (preset.providerMode !== "default") {
+        const providerConfig: any = {}
+
+        if (preset.providerMode === "order" && preset.providerOrder.trim()) {
+          providerConfig.order = preset.providerOrder.split(",").map(p => p.trim()).filter(p => p)
+        } else if (preset.providerMode === "only" && preset.providerOnly.trim()) {
+          providerConfig.only = preset.providerOnly.split(",").map(p => p.trim()).filter(p => p)
+        } else if (preset.providerMode === "ignore" && preset.providerIgnore.trim()) {
+          providerConfig.ignore = preset.providerIgnore.split(",").map(p => p.trim()).filter(p => p)
+        } else if (preset.providerMode === "sort") {
+          providerConfig.sort = preset.providerSort
+        }
+
+        providerConfig.allow_fallbacks = preset.allowFallbacks
+
+        if (Object.keys(providerConfig).length > 0) {
+          requestBody.provider = providerConfig
+        }
       }
 
       const response = await fetch(
