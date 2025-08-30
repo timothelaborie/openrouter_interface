@@ -17,6 +17,97 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { v4 as uuidv4 } from "uuid"
 import "bootstrap/dist/css/bootstrap.min.css"
 
+// IndexedDB utilities
+const DB_NAME = "OpenRouterInterfaceDB"
+const DB_VERSION = 1
+const STORE_NAME = "settings"
+
+interface DBData {
+  key: string
+  value: any
+}
+
+const openDB = (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION)
+
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result)
+
+    request.onupgradeneeded = () => {
+      const db = request.result
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "key" })
+      }
+    }
+  })
+}
+
+const setItem = async (key: string, value: any): Promise<void> => {
+  const db = await openDB()
+  const transaction = db.transaction([STORE_NAME], "readwrite")
+  const store = transaction.objectStore(STORE_NAME)
+  return new Promise((resolve, reject) => {
+    const request = store.put({ key, value })
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
+const getItem = async (key: string): Promise<any> => {
+  const db = await openDB()
+  const transaction = db.transaction([STORE_NAME], "readonly")
+  const store = transaction.objectStore(STORE_NAME)
+  return new Promise((resolve, reject) => {
+    const request = store.get(key)
+    request.onsuccess = () => resolve(request.result?.value)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+const migrateFromLocalStorage = async (): Promise<void> => {
+  try {
+    // Check if we've already migrated
+    const migrationDone = await getItem("ORI_migrationDone")
+    if (migrationDone) {
+      console.log("Migration already completed")
+      return
+    }
+
+    console.log("Starting migration from localStorage to IndexedDB...")
+
+    // Migrate API Key
+    const savedApiKey = localStorage.getItem("ORI_apiKey")
+    if (savedApiKey) {
+      await setItem("ORI_apiKey", savedApiKey)
+      console.log("Migrated API key")
+    }
+
+    // Migrate Chats
+    const savedChats = localStorage.getItem("ORI_chats")
+    if (savedChats) {
+      const parsedChats = JSON.parse(savedChats)
+      await setItem("ORI_chats", parsedChats)
+      console.log(`Migrated ${parsedChats.length} chats`)
+    }
+
+    // Migrate Presets
+    const savedPresets = localStorage.getItem("ORI_presets")
+    if (savedPresets) {
+      const parsedPresets = JSON.parse(savedPresets)
+      await setItem("ORI_presets", parsedPresets)
+      console.log(`Migrated ${parsedPresets.length} presets`)
+    }
+
+    // Mark migration as complete
+    await setItem("ORI_migrationDone", true)
+    console.log("Migration completed successfully!")
+    
+  } catch (error) {
+    console.error("Migration failed:", error)
+  }
+}
+
 // TypeScript Interfaces
 interface ModelInfo {
   id: string
@@ -1130,41 +1221,62 @@ function App() {
   const [abortController, setAbortController] =
     useState<AbortController | null>(null)
 
-  // Load data from localStorage on mount
+  // Load data from indexedDB on mount
   useEffect(() => {
-    const savedApiKey = localStorage.getItem("ORI_apiKey")
-    const savedChats = localStorage.getItem("ORI_chats")
-    const savedPresets = localStorage.getItem("ORI_presets")
+    const loadData = async () => {
+      try {
+        // Run migration first
+        await migrateFromLocalStorage()
 
-    if (savedApiKey) setApiKey(savedApiKey)
-    if (savedChats) {
-      const parsedChats = JSON.parse(savedChats)
-      setChats(parsedChats)
+        // Then load data from IndexedDB as usual
+        const savedApiKey = await getItem("ORI_apiKey")
+        const savedChats = await getItem("ORI_chats")
+        const savedPresets = await getItem("ORI_presets")
 
-      // Select the newest chat (highest created timestamp)
-      if (parsedChats.length > 0) {
-        const newestChat = parsedChats.reduce((newest: Chat, current: Chat) =>
-          current.created > newest.created ? current : newest
-        )
-        setActiveChatId(newestChat.id)
+        if (savedApiKey) setApiKey(savedApiKey)
+        if (savedChats) {
+          setChats(savedChats)
+
+          // Select the newest chat (highest created timestamp)
+          if (savedChats.length > 0) {
+            const newestChat = savedChats.reduce((newest: Chat, current: Chat) =>
+              current.created > newest.created ? current : newest
+            )
+            setActiveChatId(newestChat.id)
+          }
+        }
+        if (savedPresets) setPresets(savedPresets)
+      } catch (error) {
+        console.error("Failed to load data:", error)
       }
     }
-    if (savedPresets) setPresets(JSON.parse(savedPresets))
+
+    loadData()
   }, [])
 
-  // Save data to localStorage when it changes
+  // Save data to indexedDB when it changes
   useEffect(() => {
-    if (apiKey) localStorage.setItem("ORI_apiKey", apiKey)
+    if (apiKey) {
+      setItem("ORI_apiKey", apiKey).catch(error =>
+        console.error("Failed to save API key to IndexedDB:", error)
+      )
+    }
   }, [apiKey])
 
   useEffect(() => {
-    if (chats.length > 0)
-      localStorage.setItem("ORI_chats", JSON.stringify(chats))
+    if (chats.length > 0) {
+      setItem("ORI_chats", chats).catch(error =>
+        console.error("Failed to save chats to IndexedDB:", error)
+      )
+    }
   }, [chats])
 
   useEffect(() => {
-    if (presets.length > 0)
-      localStorage.setItem("ORI_presets", JSON.stringify(presets))
+    if (presets.length > 0) {
+      setItem("ORI_presets", presets).catch(error =>
+        console.error("Failed to save presets to IndexedDB:", error)
+      )
+    }
   }, [presets])
 
   // Update default chat names on app launch
@@ -1191,8 +1303,8 @@ function App() {
         )
         setModels(sortedModels)
 
-        // Initialize presets only if none exist and none were saved in localStorage
-        const savedPresets = localStorage.getItem("ORI_presets")
+        // Initialize presets only if none exist and none were saved in IndexedDB
+        const savedPresets = await getItem("ORI_presets")
         if (presets.length === 0 && !savedPresets && sortedModels.length > 0) {
           setPresets(createDefaultPresets(sortedModels[0].id))
         }
