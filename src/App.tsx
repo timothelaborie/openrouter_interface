@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react"
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import {
   Container,
   Row,
@@ -15,6 +15,7 @@ import remarkGfm from "remark-gfm"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { v4 as uuidv4 } from "uuid"
+import debounce from "lodash.debounce"
 import "bootstrap/dist/css/bootstrap.min.css"
 
 // IndexedDB utilities
@@ -106,6 +107,14 @@ interface Chat {
   created: number
 }
 
+interface ChatMetadata {
+  id: string
+  name: string
+  created: number
+  messageCount: number
+  lastModified: number
+}
+
 interface Preset {
   name: string
   modelId: string
@@ -124,7 +133,10 @@ interface Preset {
   allowFallbacks: boolean
 }
 
-// Helper function to create default presets
+// Constants
+const CHAT_METADATA_KEY = "ORI_chat_metadata"
+
+// Helper functions
 const createDefaultPresets = (defaultModelId: string): Preset[] => {
   return Array.from({ length: 10 }, (_, i) => ({
     name: `Preset ${i + 1}`,
@@ -145,26 +157,10 @@ const createDefaultPresets = (defaultModelId: string): Preset[] => {
   }))
 }
 
-// Helper function to check if a chat has a default name
-const hasDefaultName = (chat: Chat): boolean => {
+const hasDefaultName = (chat: Chat | ChatMetadata): boolean => {
   return /^Chat \d+$/.test(chat.name)
 }
 
-// Helper function to update default chat names based on first user message
-const updateDefaultChatNames = (chats: Chat[]): Chat[] => {
-  return chats.map((chat) => {
-    if (hasDefaultName(chat)) {
-      const firstUserMessage = chat.messages.find((msg) => msg.role === "user")
-      if (firstUserMessage && typeof firstUserMessage.content === "string" && firstUserMessage.content.trim()) {
-        const newName = firstUserMessage.content.trim().substring(0, 20)
-        return { ...chat, name: newName }
-      }
-    }
-    return chat
-  })
-}
-
-// Helper function to convert image file to base64
 const imageToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -172,6 +168,49 @@ const imageToBase64 = (file: File): Promise<string> => {
     reader.onerror = reject
     reader.readAsDataURL(file)
   })
+}
+
+// IndexedDB operations for metadata and chats
+const getChatMetadata = async (): Promise<ChatMetadata[]> => {
+  const metadata = await getItem(CHAT_METADATA_KEY)
+  return metadata || []
+}
+
+const saveChatMetadata = async (metadata: ChatMetadata[]): Promise<void> => {
+  await setItem(CHAT_METADATA_KEY, metadata)
+}
+
+const loadChat = async (chatId: string): Promise<Chat | null> => {
+  try {
+    const chat = await getItem(`ORI_chat_${chatId}`)
+    return chat
+  } catch (error) {
+    console.error(`Failed to load chat ${chatId}:`, error)
+    return null
+  }
+}
+
+// Debounced save function factory
+const createDebouncedSave = () => {
+  const pendingSaves = new Map<string, Chat>()
+  
+  const executeSave = debounce(async () => {
+    const saves = Array.from(pendingSaves.entries())
+    pendingSaves.clear()
+    
+    await Promise.all(
+      saves.map(([chatId, chat]) => 
+        setItem(`ORI_chat_${chatId}`, chat).catch(error =>
+          console.error(`Failed to save chat ${chatId}:`, error)
+        )
+      )
+    )
+  }, 1000) // Debounce for 1 second
+  
+  return (chatId: string, chat: Chat) => {
+    pendingSaves.set(chatId, chat)
+    executeSave()
+  }
 }
 
 // Code block component with copy buttons
@@ -220,9 +259,9 @@ const CodeBlock: React.FC<{ children: string; className?: string }> = ({
   )
 }
 
-// Chat History Panel Component
+// Chat History Panel Component (using metadata)
 const ChatHistoryPanel: React.FC<{
-  chats: Chat[]
+  chatMetadatas: ChatMetadata[]
   activeChatId: string | null
   renamingChatId: string | null
   onSelectChat: (chatId: string) => void
@@ -231,7 +270,7 @@ const ChatHistoryPanel: React.FC<{
   onNewChat: () => void
   onStartRename: (chatId: string) => void
 }> = ({
-  chats,
+  chatMetadatas,
   activeChatId,
   renamingChatId,
   onSelectChat,
@@ -250,74 +289,79 @@ const ChatHistoryPanel: React.FC<{
     setTempName("")
   }
 
+  // Sort chats by created date (newest first)
+  const sortedChats = useMemo(() => 
+    [...chatMetadatas].sort((a, b) => b.created - a.created),
+    [chatMetadatas]
+  )
+
   return (
     <div className="d-flex flex-column h-100 bg-light p-3">
-      <h5 className="mb-3">Chat History</h5>
+      <h5 className="mb-3">Chat History ({chatMetadatas.length})</h5>
       <div className="flex-grow-1 overflow-auto">
-        {chats
-          .slice()
-          .reverse()
-          .map((chat) => (
-            <div
-              key={chat.id}
-              className={`p-2 mb-2 rounded cursor-pointer ${
-                activeChatId === chat.id ? "bg-primary text-white" : "bg-white"
-              }`}
-              onClick={() => onSelectChat(chat.id)}
-              style={{ cursor: "pointer", position: "relative" }}
-            >
-              {renamingChatId === chat.id ? (
-                <Form.Control
-                  type="text"
-                  value={tempName}
-                  onChange={(e) => setTempName(e.target.value)}
-                  onBlur={() => handleRenameSubmit(chat.id)}
-                  onKeyPress={(e) => {
-                    if (e.key === "Enter") {
-                      handleRenameSubmit(chat.id)
-                    }
-                  }}
-                  autoFocus
-                  onClick={(e) => e.stopPropagation()}
-                />
-              ) : (
-                <div className="d-flex justify-content-between align-items-center">
+        {sortedChats.map((chat) => (
+          <div
+            key={chat.id}
+            className={`p-2 mb-2 rounded cursor-pointer ${
+              activeChatId === chat.id ? "bg-primary text-white" : "bg-white"
+            }`}
+            onClick={() => onSelectChat(chat.id)}
+            style={{ cursor: "pointer", position: "relative" }}
+          >
+            {renamingChatId === chat.id ? (
+              <Form.Control
+                type="text"
+                value={tempName}
+                onChange={(e) => setTempName(e.target.value)}
+                onBlur={() => handleRenameSubmit(chat.id)}
+                onKeyPress={(e) => {
+                  if (e.key === "Enter") {
+                    handleRenameSubmit(chat.id)
+                  }
+                }}
+                autoFocus
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <div className="d-flex justify-content-between align-items-center">
+                <div>
                   <span>{chat.name}</span>
-                  <div className="d-flex gap-1">
-                    {activeChatId === chat.id && (
-                      <Button
-                        size="sm"
-                        variant="link"
-                        className="p-0 text-danger"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onDeleteChat(chat.id)
-                        }}
-                      >
-                        🗑️
-                      </Button>
-                    )}
+                </div>
+                <div className="d-flex gap-1">
+                  {activeChatId === chat.id && (
                     <Button
                       size="sm"
                       variant="link"
-                      className={`p-0 ${
-                        activeChatId === chat.id
-                          ? "text-white"
-                          : "text-secondary"
-                      }`}
+                      className="p-0 text-danger"
                       onClick={(e) => {
                         e.stopPropagation()
-                        setTempName(chat.name)
-                        onStartRename(chat.id)
+                        onDeleteChat(chat.id)
                       }}
                     >
-                      ✏️
+                      🗑️
                     </Button>
-                  </div>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="link"
+                    className={`p-0 ${
+                      activeChatId === chat.id
+                        ? "text-white"
+                        : "text-secondary"
+                    }`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setTempName(chat.name)
+                      onStartRename(chat.id)
+                    }}
+                  >
+                    ✏️
+                  </Button>
                 </div>
-              )}
-            </div>
-          ))}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
       <Button variant="primary" className="w-100 mt-3" onClick={onNewChat}>
         New Chat
@@ -360,7 +404,6 @@ const MessageItem: React.FC<{
   const isReasoningMessage = message.messageType === "reasoning"
   const hasImageContent = Array.isArray(message.content) && message.content.some(item => item.type === "image_url")
 
-  // Determine the correct content to edit
   const getEditableContent = () => {
     if (isReasoningMessage) {
       return message.reasoning || ""
@@ -368,7 +411,6 @@ const MessageItem: React.FC<{
     if (typeof message.content === "string") {
       return message.content
     }
-    // For array content, get text parts only
     if (Array.isArray(message.content)) {
       return message.content
         .filter(item => item.type === "text")
@@ -381,7 +423,6 @@ const MessageItem: React.FC<{
   const [isEditing, setIsEditing] = useState(false)
   const [editContent, setEditContent] = useState(getEditableContent())
 
-  // Update editContent when message content changes (e.g., during streaming)
   useEffect(() => {
     if (!isEditing) {
       setEditContent(getEditableContent())
@@ -567,7 +608,6 @@ const SettingsModal: React.FC<{
   const selectedPreset = presets[selectedPresetIndex]
   const selectedModel = models.find((m) => m.id === selectedPreset?.modelId)
 
-  // Update selected preset when modal opens to show current chat's preset
   useEffect(() => {
     if (show) {
       setSelectedPresetIndex(activePresetIndex)
@@ -900,7 +940,7 @@ const ChatArea: React.FC<{
   onAppend: (content: string) => void
   isLoading: boolean
   isStreaming: boolean
-  setChats: React.Dispatch<React.SetStateAction<Chat[]>>
+  onImagePaste: (imageMessage: Message) => void
 }> = React.memo(({
   chat,
   presets,
@@ -913,7 +953,7 @@ const ChatArea: React.FC<{
   onAppend,
   isLoading,
   isStreaming,
-  setChats,
+  onImagePaste,
 }) => {
   const [inputValue, setInputValue] = useState("")
   const [shouldScrollToBottom, setShouldScrollToBottom] = useState(false)
@@ -989,7 +1029,6 @@ const ChatArea: React.FC<{
     } else if (typeof message.content === "string") {
       textToCopy = message.content
     } else {
-      // For array content, copy only text parts
       textToCopy = message.content
         .filter(item => item.type === "text")
         .map(item => (item as any).text)
@@ -1104,15 +1143,7 @@ const ChatArea: React.FC<{
                         messageType: "regular",
                       }
                       onAppend("")
-                      if (chat) {
-                        setChats(prev =>
-                          prev.map((c) =>
-                            c.id === chat.id
-                              ? { ...c, messages: [...c.messages.slice(0, -1), imageMessage] }
-                              : c
-                          )
-                        )
-                      }
+                      onImagePaste(imageMessage)
                     } catch (error) {
                       console.error("Failed to process image:", error)
                     }
@@ -1179,51 +1210,52 @@ const ChatArea: React.FC<{
 function App() {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [apiKey, setApiKey] = useState<string>("")
-  const [chats, setChats] = useState<Chat[]>([])
+  const [chatMetadatas, setChatMetadatas] = useState<ChatMetadata[]>([])
+  const [activeChat, setActiveChat] = useState<Chat | null>(null)
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const [presets, setPresets] = useState<Preset[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false)
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState<boolean>(false)
-  const [abortController, setAbortController] =
-    useState<AbortController | null>(null)
+  const [abortController, setAbortController] = useState<AbortController | null>(null)
+  
+  // Create debounced save function
+  const debouncedSaveChat = useMemo(() => createDebouncedSave(), [])
+  
+  // Reference to current streaming message for efficient updates
+  const streamingMessageRef = useRef<{
+    chatId: string
+    messageId: string
+    content: string
+    reasoning?: string
+  } | null>(null)
 
   // Load data from indexedDB on mount
   useEffect(() => {
     const loadData = async () => {
       try {
         const savedApiKey = await getItem("ORI_apiKey")
-        const savedChatIds = await getItem("ORI_chatIds")
+        const savedMetadata = await getChatMetadata()
         const savedPresets = await getItem("ORI_presets")
 
         if (savedApiKey) setApiKey(savedApiKey)
-
-        if (savedChatIds && Array.isArray(savedChatIds)) {
-          // Load each chat individually
-          const loadedChats: Chat[] = []
-          for (const chatId of savedChatIds) {
-            try {
-              const chat = await getItem(`ORI_chat_${chatId}`)
-              if (chat) {
-                loadedChats.push(chat)
-              }
-            } catch (error) {
-              console.error(`Failed to load chat ${chatId}:`, error)
-            }
-          }
-
-          if (loadedChats.length > 0) {
-            setChats(loadedChats)
-
-            // Select the newest chat (highest created timestamp)
-            const newestChat = loadedChats.reduce((newest: Chat, current: Chat) =>
-              current.created > newest.created ? current : newest
-            )
-            setActiveChatId(newestChat.id)
+        
+        if (savedMetadata && savedMetadata.length > 0) {
+          setChatMetadatas(savedMetadata)
+          
+          // Load only the most recent chat
+          const mostRecent = savedMetadata.reduce((newest, current) =>
+            current.created > newest.created ? current : newest
+          )
+          
+          const chat = await loadChat(mostRecent.id)
+          if (chat) {
+            setActiveChat(chat)
+            setActiveChatId(chat.id)
           }
         }
-
+        
         if (savedPresets) setPresets(savedPresets)
       } catch (error) {
         console.error("Failed to load data from IndexedDB:", error)
@@ -1243,21 +1275,18 @@ function App() {
   }, [apiKey])
 
   useEffect(() => {
-    if (chats.length > 0) {
-      // Save each chat individually
-      chats.forEach(chat => {
-        setItem(`ORI_chat_${chat.id}`, chat).catch(error =>
-          console.error(`Failed to save chat ${chat.id} to IndexedDB:`, error)
-        )
-      })
-
-      // Save the list of chat IDs
-      const chatIds = chats.map(chat => chat.id)
-      setItem("ORI_chatIds", chatIds).catch(error =>
-        console.error("Failed to save chat IDs to IndexedDB:", error)
+    if (chatMetadatas.length > 0) {
+      saveChatMetadata(chatMetadatas).catch(error =>
+        console.error("Failed to save metadata to IndexedDB:", error)
       )
     }
-  }, [chats])
+  }, [chatMetadatas])
+
+  useEffect(() => {
+    if (activeChat) {
+      debouncedSaveChat(activeChat.id, activeChat)
+    }
+  }, [activeChat, debouncedSaveChat])
 
   useEffect(() => {
     if (presets.length > 0) {
@@ -1266,19 +1295,6 @@ function App() {
       )
     }
   }, [presets])
-
-  // Update default chat names on app launch
-  useEffect(() => {
-    if (chats.length > 0) {
-      const updatedChats = updateDefaultChatNames(chats)
-      const hasChanges = updatedChats.some(
-        (chat, index) => chat.name !== chats[index].name
-      )
-      if (hasChanges) {
-        setChats(updatedChats)
-      }
-    }
-  }, []) // Run once on mount after chats are loaded
 
   // Fetch models on mount
   useEffect(() => {
@@ -1304,101 +1320,141 @@ function App() {
     fetchModels()
   }, [presets.length])
 
-  const activeChat = chats.find((chat) => chat.id === activeChatId) || null
+  const handleSelectChat = useCallback(async (chatId: string) => {
+    if (chatId === activeChatId) return
+    
+    // Save current chat before switching
+    if (activeChat) {
+      await setItem(`ORI_chat_${activeChat.id}`, activeChat)
+    }
+    
+    // Load new chat
+    const chat = await loadChat(chatId)
+    if (chat) {
+      setActiveChat(chat)
+      setActiveChatId(chatId)
+    }
+  }, [activeChat, activeChatId])
 
   const handleCreateNewChat = useCallback(() => {
     const currentPresetIndex = activeChat?.activePresetIndex || 0
     const newChat: Chat = {
       id: uuidv4(),
-      name: `Chat ${chats.length + 1}`,
+      name: `Chat ${chatMetadatas.length + 1}`,
       messages: [],
       activePresetIndex: currentPresetIndex,
       created: Date.now(),
     }
-    setChats(prev => [...prev, newChat])
+    
+    // Add to metadata
+    const newMetadata: ChatMetadata = {
+      id: newChat.id,
+      name: newChat.name,
+      created: newChat.created,
+      messageCount: 0,
+      lastModified: Date.now()
+    }
+    
+    setChatMetadatas(prev => [...prev, newMetadata])
+    setActiveChat(newChat)
     setActiveChatId(newChat.id)
-  }, [activeChat?.activePresetIndex, chats.length])
+    
+    // Save immediately
+    setItem(`ORI_chat_${newChat.id}`, newChat)
+  }, [activeChat?.activePresetIndex, chatMetadatas.length])
 
   const handleRenameChat = useCallback((chatId: string, newName: string) => {
-    setChats(prev =>
-      prev.map((chat) =>
-        chat.id === chatId ? { ...chat, name: newName } : chat
+    // Update metadata
+    setChatMetadatas(prev =>
+      prev.map(meta =>
+        meta.id === chatId ? { ...meta, name: newName } : meta
+      )
+    )
+    
+    // Update active chat if it's the one being renamed
+    if (activeChat && activeChat.id === chatId) {
+      setActiveChat(prev => prev ? { ...prev, name: newName } : null)
+    }
+  }, [activeChat])
+
+  const handleDeleteChat = useCallback(async (chatId: string) => {
+    // Delete from IndexedDB
+    await deleteItem(`ORI_chat_${chatId}`)
+    
+    // Update metadata
+    setChatMetadatas(prev => prev.filter(meta => meta.id !== chatId))
+    
+    // If deleting active chat, load another
+    if (activeChatId === chatId) {
+      const remainingChats = chatMetadatas.filter(meta => meta.id !== chatId)
+      if (remainingChats.length > 0) {
+        const newest = remainingChats.reduce((newest, current) =>
+          current.created > newest.created ? current : newest
+        )
+        await handleSelectChat(newest.id)
+      } else {
+        setActiveChat(null)
+        setActiveChatId(null)
+      }
+    }
+  }, [activeChatId, chatMetadatas, handleSelectChat])
+
+  const updateChatMetadata = useCallback((chatId: string, updates: Partial<ChatMetadata>) => {
+    setChatMetadatas(prev =>
+      prev.map(meta =>
+        meta.id === chatId
+          ? { ...meta, ...updates, lastModified: Date.now() }
+          : meta
       )
     )
   }, [])
 
-  const handleDeleteChat = useCallback((chatId: string) => {
-    // Delete from IndexedDB
-    deleteItem(`ORI_chat_${chatId}`).catch(error =>
-      console.error(`Failed to delete chat ${chatId} from IndexedDB:`, error)
-    )
-
-    setChats(prev => {
-      const updatedChats = prev.filter((chat) => chat.id !== chatId)
-
-      // If we deleted the active chat, select another one or set to null
-      if (activeChatId === chatId) {
-        if (updatedChats.length > 0) {
-          // Select the most recent chat
-          const newestChat = updatedChats.reduce((newest: Chat, current: Chat) =>
-            current.created > newest.created ? current : newest
-          )
-          setActiveChatId(newestChat.id)
-        } else {
-          setActiveChatId(null)
-        }
-      }
-
-      return updatedChats
-    })
-  }, [activeChatId])
-
   const handleDeleteMessage = useCallback((messageId: string) => {
     if (!activeChat) return
-    setChats(prev =>
-      prev.map((chat) =>
-        chat.id === activeChat.id
-          ? {
-              ...chat,
-              messages: chat.messages.filter(msg => msg.id !== messageId)
-            }
-          : chat
-      )
-    )
-  }, [activeChat])
+    
+    setActiveChat(prev => {
+      if (!prev) return null
+      const updatedChat = {
+        ...prev,
+        messages: prev.messages.filter(msg => msg.id !== messageId)
+      }
+      
+      // Update metadata
+      updateChatMetadata(prev.id, { messageCount: updatedChat.messages.length })
+      
+      return updatedChat
+    })
+  }, [activeChat, updateChatMetadata])
 
   const handleUpdateMessage = useCallback((messageId: string, content: string) => {
     if (!activeChat) return
-    setChats(prev =>
-      prev.map((chat) =>
-        chat.id === activeChat.id
-          ? {
-              ...chat,
-              messages: chat.messages.map((msg) =>
-                msg.id === messageId ? { ...msg, content } : msg
-              ),
-            }
-          : chat
-      )
-    )
-  }, [activeChat])
+    
+    setActiveChat(prev => {
+      if (!prev) return null
+      const updatedChat = {
+        ...prev,
+        messages: prev.messages.map(msg =>
+          msg.id === messageId ? { ...msg, content } : msg
+        )
+      }
+      
+      // Update metadata
+      updateChatMetadata(prev.id, {})
+      
+      return updatedChat
+    })
+  }, [activeChat, updateChatMetadata])
 
   const handlePresetSelect = useCallback((index: number) => {
     if (!activeChat) return
-    setChats(prev =>
-      prev.map((chat) =>
-        chat.id === activeChat.id ? { ...chat, activePresetIndex: index } : chat
-      )
-    )
+    setActiveChat(prev => prev ? { ...prev, activePresetIndex: index } : null)
   }, [activeChat])
 
   const handleAppendMessage = useCallback((content: string) => {
     if (!activeChat) return
 
-    // Determine the role for the new message
     const lastMessage = activeChat.messages[activeChat.messages.length - 1]
-    const newRole =
-      !lastMessage || lastMessage.role === "assistant" ? "user" : "assistant"
+    const newRole = !lastMessage || lastMessage.role === "assistant" ? "user" : "assistant"
 
     const newMessage: Message = {
       id: uuidv4(),
@@ -1407,24 +1463,54 @@ function App() {
       messageType: "regular",
     }
 
-    // Update chat name if it has a default name and this is a user message
-    let updatedChatName = activeChat.name
-    if (content && newRole === "user" && hasDefaultName(activeChat)) {
-      updatedChatName = content.trim().substring(0, 20)
-    }
+    setActiveChat(prev => {
+      if (!prev) return null
+      
+      const updatedName = content && newRole === "user" && hasDefaultName(prev)
+        ? content.trim().substring(0, 20)
+        : prev.name
+      
+      const updatedChat = {
+        ...prev,
+        messages: [...prev.messages, newMessage],
+        name: updatedName
+      }
+      
+      // Update metadata
+      updateChatMetadata(prev.id, {
+        name: updatedName,
+        messageCount: updatedChat.messages.length
+      })
+      
+      return updatedChat
+    })
+  }, [activeChat, updateChatMetadata])
 
-    setChats(prev =>
-      prev.map((chat) =>
-        chat.id === activeChat.id
-          ? {
-              ...chat,
-              messages: [...chat.messages, newMessage],
-              name: updatedChatName
-            }
-          : chat
-      )
-    )
-  }, [activeChat])
+  const handleImagePaste = useCallback((imageMessage: Message) => {
+    if (!activeChat) return
+    
+    setActiveChat(prev => {
+      if (!prev) return null
+      
+      // Replace the last message (which should be empty from onAppend) with the image message
+      const updatedMessages = [...prev.messages]
+      if (updatedMessages.length > 0 && updatedMessages[updatedMessages.length - 1].content === "") {
+        updatedMessages[updatedMessages.length - 1] = imageMessage
+      } else {
+        updatedMessages.push(imageMessage)
+      }
+      
+      const updatedChat = {
+        ...prev,
+        messages: updatedMessages
+      }
+      
+      // Update metadata
+      updateChatMetadata(prev.id, { messageCount: updatedChat.messages.length })
+      
+      return updatedChat
+    })
+  }, [activeChat, updateChatMetadata])
 
   const handleStopMessage = useCallback(() => {
     if (abortController) {
@@ -1475,13 +1561,27 @@ function App() {
       updatedChatName = content.trim().substring(0, 20)
     }
 
-    setChats(prev =>
-      prev.map((chat) =>
-        chat.id === activeChat.id
-          ? { ...chat, messages: updatedMessages, name: updatedChatName }
-          : chat
-      )
-    )
+    const updatedChat = {
+      ...activeChat,
+      messages: updatedMessages,
+      name: updatedChatName
+    }
+    
+    setActiveChat(updatedChat)
+    
+    // Update metadata
+    updateChatMetadata(activeChat.id, {
+      name: updatedChatName,
+      messageCount: updatedMessages.length
+    })
+
+    // Initialize streaming reference
+    streamingMessageRef.current = {
+      chatId: activeChat.id,
+      messageId: assistantMessage.id,
+      content: "",
+      reasoning: ""
+    }
 
     const controller = new AbortController()
     setAbortController(controller)
@@ -1565,9 +1665,44 @@ function App() {
 
       if (!reader) throw new Error("No response body")
 
+      // Batch streaming updates for better performance
+      let accumulatedContent = ""
+      let accumulatedReasoning = ""
+      let updateTimer: NodeJS.Timeout | null = null
+      
+      const flushUpdate = () => {
+        if (streamingMessageRef.current && (accumulatedContent || accumulatedReasoning)) {
+          const finalContent = accumulatedContent
+          const finalReasoning = accumulatedReasoning
+          
+          setActiveChat(prev => {
+            if (!prev || prev.id !== streamingMessageRef.current?.chatId) return prev
+            
+            return {
+              ...prev,
+              messages: prev.messages.map(msg => {
+                if (msg.id === streamingMessageRef.current?.messageId) {
+                  return { ...msg, content: msg.content + finalContent }
+                }
+                if (msg.messageType === "reasoning" && msg.id.startsWith("reasoning-")) {
+                  return { ...msg, reasoning: (msg.reasoning || "") + finalReasoning }
+                }
+                return msg
+              })
+            }
+          })
+          
+          accumulatedContent = ""
+          accumulatedReasoning = ""
+        }
+      }
+
       while (true) {
         const { done, value } = await reader.read()
-        if (done) break
+        if (done) {
+          flushUpdate()
+          break
+        }
 
         const chunk = decoder.decode(value)
         const lines = chunk.split("\n")
@@ -1582,67 +1717,57 @@ function App() {
               const delta = parsed.choices?.[0]?.delta
 
               if (delta?.content) {
-                setChats((prevChats) =>
-                  prevChats.map((chat) =>
-                    chat.id === activeChat.id
-                      ? {
-                          ...chat,
-                          messages: chat.messages.map((msg) =>
-                            msg.id === assistantMessage.id
-                              ? { ...msg, content: msg.content + delta.content }
-                              : msg
-                          ),
-                        }
-                      : chat
-                  )
-                )
+                accumulatedContent += delta.content
+                
+                // Batch updates every 50ms for smooth streaming
+                if (!updateTimer) {
+                  updateTimer = setTimeout(() => {
+                    flushUpdate()
+                    updateTimer = null
+                  }, 50)
+                }
               }
 
               if (delta?.reasoning) {
-                setChats((prevChats) =>
-                  prevChats.map((chat) => {
-                    if (chat.id === activeChat.id) {
-                      // Find existing reasoning message or create new one
-                      const existingReasoningMsg = chat.messages.find(
-                        (msg) =>
-                          msg.messageType === "reasoning" &&
-                          msg.id.startsWith("reasoning-")
-                      )
-
-                      if (existingReasoningMsg) {
-                        return {
-                          ...chat,
-                          messages: chat.messages.map((msg) =>
-                            msg.id === existingReasoningMsg.id
-                              ? {
-                                  ...msg,
-                                  reasoning:
-                                    (msg.reasoning || "") + delta.reasoning,
-                                }
-                              : msg
-                          ),
-                        }
-                      } else {
-                        // Create new reasoning message
-                        const reasoningMessage: Message = {
-                          id: `reasoning-${uuidv4()}`,
-                          role: "assistant",
-                          content: "",
-                          reasoning: delta.reasoning,
-                          messageType: "reasoning",
-                        }
-                        // Insert reasoning message before the assistant message
-                        const assistantIndex = chat.messages.findIndex(
-                          (msg) => msg.id === assistantMessage.id
-                        )
-                        const newMessages = [...chat.messages]
-                        newMessages.splice(assistantIndex, 0, reasoningMessage)
-                        return { ...chat, messages: newMessages }
-                      }
+                accumulatedReasoning += delta.reasoning
+                
+                // Create reasoning message if it doesn't exist
+                setActiveChat(prev => {
+                  if (!prev || prev.id !== streamingMessageRef.current?.chatId) return prev
+                  
+                  const existingReasoningMsg = prev.messages.find(
+                    msg => msg.messageType === "reasoning" && msg.id.startsWith("reasoning-")
+                  )
+                  
+                  if (!existingReasoningMsg) {
+                    const reasoningMessage: Message = {
+                      id: `reasoning-${uuidv4()}`,
+                      role: "assistant",
+                      content: "",
+                      reasoning: "",
+                      messageType: "reasoning",
                     }
-                    return chat
-                  })
-                )
+                    
+                    const assistantIndex = prev.messages.findIndex(
+                      msg => msg.id === streamingMessageRef.current?.messageId
+                    )
+                    
+                    const newMessages = [...prev.messages]
+                    newMessages.splice(assistantIndex, 0, reasoningMessage)
+                    
+                    return { ...prev, messages: newMessages }
+                  }
+                  
+                  return prev
+                })
+                
+                // Batch reasoning updates
+                if (!updateTimer) {
+                  updateTimer = setTimeout(() => {
+                    flushUpdate()
+                    updateTimer = null
+                  }, 50)
+                }
               }
             } catch (e) {
               console.error("Failed to parse SSE data:", e)
@@ -1660,21 +1785,22 @@ function App() {
         )
       }
     } finally {
+      streamingMessageRef.current = null
       setIsLoading(false)
       setIsStreaming(false)
       setAbortController(null)
     }
-  }, [activeChat, apiKey, presets])
+  }, [activeChat, apiKey, presets, updateChatMetadata])
 
   return (
     <Container fluid className="vh-100 p-0">
       <Row className="h-100 g-0">
         <Col xs={2} className="h-100 border-end">
           <ChatHistoryPanel
-            chats={chats}
+            chatMetadatas={chatMetadatas}
             activeChatId={activeChatId}
             renamingChatId={renamingChatId}
-            onSelectChat={setActiveChatId}
+            onSelectChat={handleSelectChat}
             onRenameChat={handleRenameChat}
             onDeleteChat={handleDeleteChat}
             onNewChat={handleCreateNewChat}
@@ -1694,7 +1820,7 @@ function App() {
             onAppend={handleAppendMessage}
             isLoading={isLoading}
             isStreaming={isStreaming}
-            setChats={setChats}
+            onImagePaste={handleImagePaste}
           />
         </Col>
       </Row>
