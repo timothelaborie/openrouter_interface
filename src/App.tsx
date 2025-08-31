@@ -65,6 +65,17 @@ const getItem = async (key: string): Promise<any> => {
   })
 }
 
+const deleteItem = async (key: string): Promise<void> => {
+  const db = await openDB()
+  const transaction = db.transaction([STORE_NAME], "readwrite")
+  const store = transaction.objectStore(STORE_NAME)
+  return new Promise((resolve, reject) => {
+    const request = store.delete(key)
+    request.onsuccess = () => resolve()
+    request.onerror = () => reject(request.error)
+  })
+}
+
 // TypeScript Interfaces
 interface ModelInfo {
   id: string
@@ -1183,21 +1194,36 @@ function App() {
     const loadData = async () => {
       try {
         const savedApiKey = await getItem("ORI_apiKey")
-        const savedChats = await getItem("ORI_chats")
+        const savedChatIds = await getItem("ORI_chatIds")
         const savedPresets = await getItem("ORI_presets")
 
         if (savedApiKey) setApiKey(savedApiKey)
-        if (savedChats) {
-          setChats(savedChats)
 
-          // Select the newest chat (highest created timestamp)
-          if (savedChats.length > 0) {
-            const newestChat = savedChats.reduce((newest: Chat, current: Chat) =>
+        if (savedChatIds && Array.isArray(savedChatIds)) {
+          // Load each chat individually
+          const loadedChats: Chat[] = []
+          for (const chatId of savedChatIds) {
+            try {
+              const chat = await getItem(`ORI_chat_${chatId}`)
+              if (chat) {
+                loadedChats.push(chat)
+              }
+            } catch (error) {
+              console.error(`Failed to load chat ${chatId}:`, error)
+            }
+          }
+
+          if (loadedChats.length > 0) {
+            setChats(loadedChats)
+
+            // Select the newest chat (highest created timestamp)
+            const newestChat = loadedChats.reduce((newest: Chat, current: Chat) =>
               current.created > newest.created ? current : newest
             )
             setActiveChatId(newestChat.id)
           }
         }
+
         if (savedPresets) setPresets(savedPresets)
       } catch (error) {
         console.error("Failed to load data from IndexedDB:", error)
@@ -1218,8 +1244,17 @@ function App() {
 
   useEffect(() => {
     if (chats.length > 0) {
-      setItem("ORI_chats", chats).catch(error =>
-        console.error("Failed to save chats to IndexedDB:", error)
+      // Save each chat individually
+      chats.forEach(chat => {
+        setItem(`ORI_chat_${chat.id}`, chat).catch(error =>
+          console.error(`Failed to save chat ${chat.id} to IndexedDB:`, error)
+        )
+      })
+
+      // Save the list of chat IDs
+      const chatIds = chats.map(chat => chat.id)
+      setItem("ORI_chatIds", chatIds).catch(error =>
+        console.error("Failed to save chat IDs to IndexedDB:", error)
       )
     }
   }, [chats])
@@ -1293,6 +1328,11 @@ function App() {
   }, [])
 
   const handleDeleteChat = useCallback((chatId: string) => {
+    // Delete from IndexedDB
+    deleteItem(`ORI_chat_${chatId}`).catch(error =>
+      console.error(`Failed to delete chat ${chatId} from IndexedDB:`, error)
+    )
+
     setChats(prev => {
       const updatedChats = prev.filter((chat) => chat.id !== chatId)
 
