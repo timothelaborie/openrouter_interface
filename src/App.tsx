@@ -384,7 +384,7 @@ const PresetBar: React.FC<{
           variant={index === activePresetIndex ? "primary" : "outline-primary"}
           size="sm"
           onClick={() => onSelect(index)}
-          style={{ minWidth: "100px" }}
+          style={{ minWidth: "80px" }}
         >
           {preset.name}
         </Button>
