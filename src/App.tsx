@@ -138,7 +138,7 @@ const CHAT_METADATA_KEY = "ORI_chat_metadata"
 
 // Helper functions
 const createDefaultPresets = (defaultModelId: string): Preset[] => {
-  return Array.from({ length: 10 }, (_, i) => ({
+  return Array.from({ length: 16 }, (_, i) => ({
     name: `Preset ${i + 1}`,
     modelId: defaultModelId,
     systemPrompt: "",
@@ -1256,7 +1256,31 @@ function App() {
           }
         }
 
-        if (savedPresets) setPresets(savedPresets)
+        if (savedPresets) {
+          // Ensure we always have 16 presets
+          if (savedPresets.length < 16) {
+            const additionalPresets = Array.from({ length: 16 - savedPresets.length }, (_, i) => ({
+              name: `Preset ${savedPresets.length + i + 1}`,
+              modelId: "",
+              systemPrompt: "",
+              temperature: 0.0,
+              topP: 1.0,
+              maxTokens: 0,
+              reasoningEffort: "none" as const,
+              reasoningMaxTokens: 0,
+              reasoningExclude: false,
+              providerMode: "default" as const,
+              providerOrder: "",
+              providerOnly: "",
+              providerIgnore: "",
+              providerSort: "price" as const,
+              allowFallbacks: true,
+            }))
+            setPresets([...savedPresets, ...additionalPresets])
+          } else {
+            setPresets(savedPresets)
+          }
+        }
       } catch (error) {
         console.error("Failed to load data from IndexedDB:", error)
       }
@@ -1311,6 +1335,14 @@ function App() {
         const savedPresets = await getItem("ORI_presets")
         if (presets.length === 0 && !savedPresets && sortedModels.length > 0) {
           setPresets(createDefaultPresets(sortedModels[0].id))
+        } else if (presets.length > 0 && sortedModels.length > 0) {
+          // Update any presets with empty modelId to use the first available model
+          const updatedPresets = presets.map(preset =>
+            preset.modelId === "" ? { ...preset, modelId: sortedModels[0].id } : preset
+          )
+          if (updatedPresets.some((preset, index) => preset.modelId !== presets[index].modelId)) {
+            setPresets(updatedPresets)
+          }
         }
       } catch (error) {
         console.error("Failed to fetch models:", error)
