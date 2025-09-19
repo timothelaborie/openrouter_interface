@@ -193,20 +193,20 @@ const loadChat = async (chatId: string): Promise<Chat | null> => {
 // Debounced save function factory
 const createDebouncedSave = () => {
   const pendingSaves = new Map<string, Chat>()
-  
+
   const executeSave = debounce(async () => {
     const saves = Array.from(pendingSaves.entries())
     pendingSaves.clear()
-    
+
     await Promise.all(
-      saves.map(([chatId, chat]) => 
+      saves.map(([chatId, chat]) =>
         setItem(`ORI_chat_${chatId}`, chat).catch(error =>
           console.error(`Failed to save chat ${chatId}:`, error)
         )
       )
     )
   }, 1000) // Debounce for 1 second
-  
+
   return (chatId: string, chat: Chat) => {
     pendingSaves.set(chatId, chat)
     executeSave()
@@ -290,7 +290,7 @@ const ChatHistoryPanel: React.FC<{
   }
 
   // Sort chats by created date (newest first)
-  const sortedChats = useMemo(() => 
+  const sortedChats = useMemo(() =>
     [...chatMetadatas].sort((a, b) => b.created - a.created),
     [chatMetadatas]
   )
@@ -1219,10 +1219,10 @@ function App() {
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null)
   const [isStreaming, setIsStreaming] = useState<boolean>(false)
   const [abortController, setAbortController] = useState<AbortController | null>(null)
-  
+
   // Create debounced save function
   const debouncedSaveChat = useMemo(() => createDebouncedSave(), [])
-  
+
   // Reference to current streaming message for efficient updates
   const streamingMessageRef = useRef<{
     chatId: string
@@ -1240,22 +1240,22 @@ function App() {
         const savedPresets = await getItem("ORI_presets")
 
         if (savedApiKey) setApiKey(savedApiKey)
-        
+
         if (savedMetadata && savedMetadata.length > 0) {
           setChatMetadatas(savedMetadata)
-          
+
           // Load only the most recent chat
           const mostRecent = savedMetadata.reduce((newest, current) =>
             current.created > newest.created ? current : newest
           )
-          
+
           const chat = await loadChat(mostRecent.id)
           if (chat) {
             setActiveChat(chat)
             setActiveChatId(chat.id)
           }
         }
-        
+
         if (savedPresets) setPresets(savedPresets)
       } catch (error) {
         console.error("Failed to load data from IndexedDB:", error)
@@ -1322,12 +1322,12 @@ function App() {
 
   const handleSelectChat = useCallback(async (chatId: string) => {
     if (chatId === activeChatId) return
-    
+
     // Save current chat before switching
     if (activeChat) {
       await setItem(`ORI_chat_${activeChat.id}`, activeChat)
     }
-    
+
     // Load new chat
     const chat = await loadChat(chatId)
     if (chat) {
@@ -1345,7 +1345,7 @@ function App() {
       activePresetIndex: currentPresetIndex,
       created: Date.now(),
     }
-    
+
     // Add to metadata
     const newMetadata: ChatMetadata = {
       id: newChat.id,
@@ -1354,11 +1354,11 @@ function App() {
       messageCount: 0,
       lastModified: Date.now()
     }
-    
+
     setChatMetadatas(prev => [...prev, newMetadata])
     setActiveChat(newChat)
     setActiveChatId(newChat.id)
-    
+
     // Save immediately
     setItem(`ORI_chat_${newChat.id}`, newChat)
   }, [activeChat?.activePresetIndex, chatMetadatas.length])
@@ -1370,7 +1370,7 @@ function App() {
         meta.id === chatId ? { ...meta, name: newName } : meta
       )
     )
-    
+
     // Update active chat if it's the one being renamed
     if (activeChat && activeChat.id === chatId) {
       setActiveChat(prev => prev ? { ...prev, name: newName } : null)
@@ -1380,10 +1380,10 @@ function App() {
   const handleDeleteChat = useCallback(async (chatId: string) => {
     // Delete from IndexedDB
     await deleteItem(`ORI_chat_${chatId}`)
-    
+
     // Update metadata
     setChatMetadatas(prev => prev.filter(meta => meta.id !== chatId))
-    
+
     // If deleting active chat, load another
     if (activeChatId === chatId) {
       const remainingChats = chatMetadatas.filter(meta => meta.id !== chatId)
@@ -1411,24 +1411,24 @@ function App() {
 
   const handleDeleteMessage = useCallback((messageId: string) => {
     if (!activeChat) return
-    
+
     setActiveChat(prev => {
       if (!prev) return null
       const updatedChat = {
         ...prev,
         messages: prev.messages.filter(msg => msg.id !== messageId)
       }
-      
+
       // Update metadata
       updateChatMetadata(prev.id, { messageCount: updatedChat.messages.length })
-      
+
       return updatedChat
     })
   }, [activeChat, updateChatMetadata])
 
   const handleUpdateMessage = useCallback((messageId: string, content: string) => {
     if (!activeChat) return
-    
+
     setActiveChat(prev => {
       if (!prev) return null
       const updatedChat = {
@@ -1437,10 +1437,10 @@ function App() {
           msg.id === messageId ? { ...msg, content } : msg
         )
       }
-      
+
       // Update metadata
       updateChatMetadata(prev.id, {})
-      
+
       return updatedChat
     })
   }, [activeChat, updateChatMetadata])
@@ -1465,33 +1465,33 @@ function App() {
 
     setActiveChat(prev => {
       if (!prev) return null
-      
+
       const updatedName = content && newRole === "user" && hasDefaultName(prev)
         ? content.trim().substring(0, 20)
         : prev.name
-      
+
       const updatedChat = {
         ...prev,
         messages: [...prev.messages, newMessage],
         name: updatedName
       }
-      
+
       // Update metadata
       updateChatMetadata(prev.id, {
         name: updatedName,
         messageCount: updatedChat.messages.length
       })
-      
+
       return updatedChat
     })
   }, [activeChat, updateChatMetadata])
 
   const handleImagePaste = useCallback((imageMessage: Message) => {
     if (!activeChat) return
-    
+
     setActiveChat(prev => {
       if (!prev) return null
-      
+
       // Replace the last message (which should be empty from onAppend) with the image message
       const updatedMessages = [...prev.messages]
       if (updatedMessages.length > 0 && updatedMessages[updatedMessages.length - 1].content === "") {
@@ -1499,15 +1499,15 @@ function App() {
       } else {
         updatedMessages.push(imageMessage)
       }
-      
+
       const updatedChat = {
         ...prev,
         messages: updatedMessages
       }
-      
+
       // Update metadata
       updateChatMetadata(prev.id, { messageCount: updatedChat.messages.length })
-      
+
       return updatedChat
     })
   }, [activeChat, updateChatMetadata])
@@ -1566,9 +1566,9 @@ function App() {
       messages: updatedMessages,
       name: updatedChatName
     }
-    
+
     setActiveChat(updatedChat)
-    
+
     // Update metadata
     updateChatMetadata(activeChat.id, {
       name: updatedChatName,
@@ -1669,15 +1669,15 @@ function App() {
       let accumulatedContent = ""
       let accumulatedReasoning = ""
       let updateTimer: NodeJS.Timeout | null = null
-      
+
       const flushUpdate = () => {
         if (streamingMessageRef.current && (accumulatedContent || accumulatedReasoning)) {
           const finalContent = accumulatedContent
           const finalReasoning = accumulatedReasoning
-          
+
           setActiveChat(prev => {
             if (!prev || prev.id !== streamingMessageRef.current?.chatId) return prev
-            
+
             return {
               ...prev,
               messages: prev.messages.map(msg => {
@@ -1691,7 +1691,7 @@ function App() {
               })
             }
           })
-          
+
           accumulatedContent = ""
           accumulatedReasoning = ""
         }
@@ -1718,7 +1718,7 @@ function App() {
 
               if (delta?.content) {
                 accumulatedContent += delta.content
-                
+
                 // Batch updates every 50ms for smooth streaming
                 if (!updateTimer) {
                   updateTimer = setTimeout(() => {
@@ -1730,15 +1730,15 @@ function App() {
 
               if (delta?.reasoning) {
                 accumulatedReasoning += delta.reasoning
-                
+
                 // Create reasoning message if it doesn't exist
                 setActiveChat(prev => {
                   if (!prev || prev.id !== streamingMessageRef.current?.chatId) return prev
-                  
+
                   const existingReasoningMsg = prev.messages.find(
                     msg => msg.messageType === "reasoning" && msg.id.startsWith("reasoning-")
                   )
-                  
+
                   if (!existingReasoningMsg) {
                     const reasoningMessage: Message = {
                       id: `reasoning-${uuidv4()}`,
@@ -1747,20 +1747,20 @@ function App() {
                       reasoning: "",
                       messageType: "reasoning",
                     }
-                    
+
                     const assistantIndex = prev.messages.findIndex(
                       msg => msg.id === streamingMessageRef.current?.messageId
                     )
-                    
+
                     const newMessages = [...prev.messages]
                     newMessages.splice(assistantIndex, 0, reasoningMessage)
-                    
+
                     return { ...prev, messages: newMessages }
                   }
-                  
+
                   return prev
                 })
-                
+
                 // Batch reasoning updates
                 if (!updateTimer) {
                   updateTimer = setTimeout(() => {
