@@ -1704,16 +1704,18 @@ function App() {
 
       const flushUpdate = () => {
         if (streamingMessageRef.current && (accumulatedContent || accumulatedReasoning)) {
+          const chatId = streamingMessageRef.current.chatId
+          const messageId = streamingMessageRef.current.messageId
           const finalContent = accumulatedContent
           const finalReasoning = accumulatedReasoning
 
           setActiveChat(prev => {
-            if (!prev || prev.id !== streamingMessageRef.current?.chatId) return prev
+            if (!prev || prev.id !== chatId) return prev
 
             return {
               ...prev,
               messages: prev.messages.map(msg => {
-                if (msg.id === streamingMessageRef.current?.messageId) {
+                if (msg.id === messageId) {
                   return { ...msg, content: msg.content + finalContent }
                 }
                 if (msg.messageType === "reasoning" && msg.id.startsWith("reasoning-")) {
@@ -1732,6 +1734,10 @@ function App() {
       while (true) {
         const { done, value } = await reader.read()
         if (done) {
+          if (updateTimer) {
+            clearTimeout(updateTimer)
+            updateTimer = null
+          }
           flushUpdate()
           break
         }
