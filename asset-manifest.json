@@ -1,13 +1,13 @@
 {
   "files": {
     "main.css": "/openrouter_interface/static/css/main.2544e43a.css",
-    "main.js": "/openrouter_interface/static/js/main.d8850abe.js",
+    "main.js": "/openrouter_interface/static/js/main.d264d7a8.js",
     "index.html": "/openrouter_interface/index.html",
     "main.2544e43a.css.map": "/openrouter_interface/static/css/main.2544e43a.css.map",
-    "main.d8850abe.js.map": "/openrouter_interface/static/js/main.d8850abe.js.map"
+    "main.d264d7a8.js.map": "/openrouter_interface/static/js/main.d264d7a8.js.map"
   },
   "entrypoints": [
     "static/css/main.2544e43a.css",
-    "static/js/main.d8850abe.js"
+    "static/js/main.d264d7a8.js"
   ]
 }
