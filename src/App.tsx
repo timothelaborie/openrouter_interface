@@ -1231,6 +1231,9 @@ function App() {
     reasoning?: string
   } | null>(null)
 
+  // Track last activity time for streaming timeout
+  const lastStreamActivityRef = useRef<number>(0)
+
   // Load data from indexedDB on mount
   useEffect(() => {
     const loadData = async () => {
@@ -1701,6 +1704,9 @@ function App() {
       let accumulatedContent = ""
       let accumulatedReasoning = ""
       let updateTimer: NodeJS.Timeout | null = null
+      let partialLine = "" // Handle SSE messages split across chunks
+      let totalContent = "" // Track total content for final verification
+      let totalReasoning = "" // Track total reasoning for final verification
 
       const flushUpdate = () => {
         if (streamingMessageRef.current && (accumulatedContent || accumulatedReasoning)) {
@@ -1708,6 +1714,10 @@ function App() {
           const messageId = streamingMessageRef.current.messageId
           const finalContent = accumulatedContent
           const finalReasoning = accumulatedReasoning
+
+          // Update totals for verification
+          totalContent += finalContent
+          totalReasoning += finalReasoning
 
           setActiveChat(prev => {
             if (!prev || prev.id !== chatId) return prev
@@ -1731,24 +1741,92 @@ function App() {
         }
       }
 
+      // Force final content synchronization
+      const finalSync = () => {
+        if (streamingMessageRef.current) {
+          const chatId = streamingMessageRef.current.chatId
+          const messageId = streamingMessageRef.current.messageId
+          const finalTotalContent = totalContent
+          const finalTotalReasoning = totalReasoning
+
+          setActiveChat(prev => {
+            if (!prev || prev.id !== chatId) return prev
+
+            return {
+              ...prev,
+              messages: prev.messages.map(msg => {
+                if (msg.id === messageId) {
+                  // Ensure content matches total accumulated
+                  if (msg.content !== finalTotalContent) {
+                    return { ...msg, content: finalTotalContent }
+                  }
+                }
+                if (msg.messageType === "reasoning" && msg.id.startsWith("reasoning-")) {
+                  if (msg.reasoning !== finalTotalReasoning) {
+                    return { ...msg, reasoning: finalTotalReasoning }
+                  }
+                }
+                return msg
+              })
+            }
+          })
+        }
+      }
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) {
+          // Clear any pending timer
           if (updateTimer) {
             clearTimeout(updateTimer)
             updateTimer = null
           }
+          // Flush any remaining accumulated content
           flushUpdate()
+          // Process any remaining partial line
+          if (partialLine.startsWith("data: ")) {
+            const data = partialLine.slice(6)
+            if (data && data !== "[DONE]") {
+              try {
+                const parsed = JSON.parse(data)
+                const delta = parsed.choices?.[0]?.delta
+                if (delta?.content) {
+                  totalContent += delta.content
+                }
+                if (delta?.reasoning) {
+                  totalReasoning += delta.reasoning
+                }
+              } catch (e) {
+                // Ignore parse errors for partial data
+              }
+            }
+          }
           break
         }
 
-        const chunk = decoder.decode(value)
-        const lines = chunk.split("\n")
+        const chunk = decoder.decode(value, { stream: true })
+        // Combine with any partial line from previous chunk
+        const fullChunk = partialLine + chunk
+        const lines = fullChunk.split("\n")
+
+        // Last line might be incomplete, save for next iteration
+        partialLine = lines.pop() || ""
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
+            // Update activity timestamp
+            lastStreamActivityRef.current = Date.now()
+
             const data = line.slice(6)
-            if (data === "[DONE]") continue
+            if (data === "[DONE]") {
+              // Flush before processing DONE signal
+              if (updateTimer) {
+                clearTimeout(updateTimer)
+                updateTimer = null
+              }
+              flushUpdate()
+              continue
+            }
 
             try {
               const parsed = JSON.parse(data)
@@ -1813,9 +1891,22 @@ function App() {
           }
         }
       }
+
+      // Final flush after loop completes
+      if (updateTimer) {
+        clearTimeout(updateTimer)
+        updateTimer = null
+      }
+      flushUpdate()
+
+      // Wait a tick for state to settle, then do final sync
+      await new Promise(resolve => setTimeout(resolve, 100))
+      finalSync()
+
     } catch (error: any) {
       if (error.name === "AbortError") {
         console.log("Request was aborted")
+        // Content should already be flushed up to the abort point
       } else {
         console.error("Failed to send message:", error)
         alert(
