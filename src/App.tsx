@@ -259,8 +259,21 @@ const CodeBlock: React.FC<{ children: string; className?: string }> = ({
   )
 }
 
+// Image with resize/undo capability
+const ImageWithResize: React.FC<{
+  imageUrl: string
+}> = ({ imageUrl }) => {
+  return (
+    <img
+      src={imageUrl}
+      alt="Pasted image"
+      style={{ maxWidth: "100%", height: "auto", borderRadius: "8px" }}
+    />
+  )
+}
+
 // Chat History Panel Component (using metadata)
-const ChatHistoryPanel: React.FC<{
+interface ChatHistoryPanelProps {
   chatMetadatas: ChatMetadata[]
   activeChatId: string | null
   renamingChatId: string | null
@@ -269,7 +282,10 @@ const ChatHistoryPanel: React.FC<{
   onDeleteChat: (chatId: string) => void
   onNewChat: () => void
   onStartRename: (chatId: string) => void
-}> = ({
+  onSearchChats: (query: string) => Promise<Set<string>>
+}
+
+const ChatHistoryPanel = React.memo<ChatHistoryPanelProps>(({
   chatMetadatas,
   activeChatId,
   renamingChatId,
@@ -278,8 +294,38 @@ const ChatHistoryPanel: React.FC<{
   onDeleteChat,
   onNewChat,
   onStartRename,
+  onSearchChats,
 }) => {
   const [tempName, setTempName] = useState("")
+  const [isSearchMode, setIsSearchMode] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [searchResults, setSearchResults] = useState<Set<string> | null>(null)
+  const [isSearching, setIsSearching] = useState(false)
+
+  const handleSearchClick = () => {
+    if (isSearchMode) {
+      setIsSearchMode(false)
+      setSearchQuery("")
+      setSearchResults(null)
+      return
+    }
+
+    setIsSearchMode(true)
+  }
+
+  const handleSearchSubmit = async () => {
+    if (!searchQuery.trim()) {
+      setSearchResults(null)
+      return
+    }
+    setIsSearching(true)
+    try {
+      const results = await onSearchChats(searchQuery.trim())
+      setSearchResults(results)
+    } finally {
+      setIsSearching(false)
+    }
+  }
 
   const handleRenameSubmit = (chatId: string) => {
     if (tempName.trim()) {
@@ -289,17 +335,64 @@ const ChatHistoryPanel: React.FC<{
     setTempName("")
   }
 
-  // Sort chats by created date (newest first)
-  const sortedChats = useMemo(() =>
-    [...chatMetadatas].sort((a, b) => b.created - a.created),
-    [chatMetadatas]
-  )
+  // Sort chats by created date (newest first), filter by search results
+  const displayedChats = useMemo(() => {
+    const sorted = [...chatMetadatas].sort((a, b) => b.created - a.created)
+    if (searchResults) {
+      return sorted.filter(chat => searchResults.has(chat.id))
+    }
+    return sorted
+  }, [chatMetadatas, searchResults])
 
   return (
     <div className="d-flex flex-column h-100 bg-light p-3">
-      <h5 className="mb-3">Chat History ({chatMetadatas.length})</h5>
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <h5 className="mb-0">Chat History ({chatMetadatas.length})</h5>
+        <Button
+          size="sm"
+          variant={isSearchMode ? "primary" : "outline-secondary"}
+          onClick={handleSearchClick}
+          title={isSearchMode ? "Close search" : "Search chats"}
+        >
+          {isSearchMode ? "✕" : "🔍"}
+        </Button>
+      </div>
+      {isSearchMode && (
+        <div className="mb-3">
+          <div className="d-flex gap-1">
+            <Form.Control
+              type="text"
+              size="sm"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSearchSubmit()
+              }}
+              placeholder="Search messages..."
+              disabled={isSearching}
+              autoFocus
+            />
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={handleSearchSubmit}
+              disabled={isSearching || !searchQuery.trim()}
+            >
+              {isSearching ? "⏳" : "Go"}
+            </Button>
+          </div>
+          {isSearching && (
+            <small className="text-muted">Searching… this may take a while</small>
+          )}
+          {searchResults && !isSearching && (
+            <small className="text-muted">
+              {searchResults.size} chat(s) found
+            </small>
+          )}
+        </div>
+      )}
       <div className="flex-grow-1 overflow-auto">
-        {sortedChats.map((chat) => (
+        {displayedChats.map((chat) => (
           <div
             key={chat.id}
             className={`p-2 mb-2 rounded cursor-pointer ${
@@ -368,7 +461,7 @@ const ChatHistoryPanel: React.FC<{
       </Button>
     </div>
   )
-}
+})
 
 // Preset Bar Component
 const PresetBar: React.FC<{
@@ -399,8 +492,9 @@ const MessageItem: React.FC<{
   onDeleteMessage: (messageId: string) => void
   onCopyMessage: (message: Message) => void
   onUpdateMessage: (messageId: string, content: string) => void
+  onResizeImage: (messageId: string, imageIndex: number, newUrl: string) => void
   isStreaming: boolean
-}> = React.memo(({ message, onDeleteMessage, onCopyMessage, onUpdateMessage, isStreaming }) => {
+}> = React.memo(({ message, onDeleteMessage, onCopyMessage, onUpdateMessage, onResizeImage, isStreaming }) => {
   const isReasoningMessage = message.messageType === "reasoning"
   const hasImageContent = Array.isArray(message.content) && message.content.some(item => item.type === "image_url")
 
@@ -440,6 +534,69 @@ const MessageItem: React.FC<{
   const handleEdit = useCallback((content: string) => {
     onUpdateMessage(message.id, content)
   }, [onUpdateMessage, message.id])
+
+  const [imageUndoUrls, setImageUndoUrls] = useState<Record<number, string>>({})
+  const imageUndoTimersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
+
+  useEffect(() => {
+    return () => {
+      Object.values(imageUndoTimersRef.current).forEach(timer => clearTimeout(timer))
+    }
+  }, [])
+
+  const handleShrinkImage = useCallback((imageIndex: number, imageUrl: string) => {
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement("canvas")
+      canvas.width = Math.max(1, Math.floor(img.width / 2))
+      canvas.height = Math.max(1, Math.floor(img.height / 2))
+      const ctx = canvas.getContext("2d")
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        const resizedUrl = canvas.toDataURL("image/png")
+
+        if (imageUndoTimersRef.current[imageIndex]) {
+          clearTimeout(imageUndoTimersRef.current[imageIndex])
+        }
+        setImageUndoUrls(prev => ({ ...prev, [imageIndex]: imageUrl }))
+        onResizeImage(message.id, imageIndex, resizedUrl)
+
+        imageUndoTimersRef.current[imageIndex] = setTimeout(() => {
+          setImageUndoUrls(prev => {
+            const next = { ...prev }
+            delete next[imageIndex]
+            return next
+          })
+          delete imageUndoTimersRef.current[imageIndex]
+        }, 5000)
+      }
+    }
+    img.src = imageUrl
+  }, [onResizeImage, message.id])
+
+  const handleUndoImage = useCallback((imageIndex: number) => {
+    const previousUrl = imageUndoUrls[imageIndex]
+    if (previousUrl) {
+      if (imageUndoTimersRef.current[imageIndex]) {
+        clearTimeout(imageUndoTimersRef.current[imageIndex])
+        delete imageUndoTimersRef.current[imageIndex]
+      }
+      onResizeImage(message.id, imageIndex, previousUrl)
+      setImageUndoUrls(prev => {
+        const next = { ...prev }
+        delete next[imageIndex]
+        return next
+      })
+    }
+  }, [imageUndoUrls, onResizeImage, message.id])
+
+  const imageIndexes = useMemo(() => {
+    if (!Array.isArray(message.content)) return []
+    return message.content.reduce<number[]>((acc, item, index) => {
+      if (item.type === "image_url") acc.push(index)
+      return acc
+    }, [])
+  }, [message.content])
 
   return (
     <div
@@ -531,11 +688,7 @@ const MessageItem: React.FC<{
                             {item.text}
                           </ReactMarkdown>
                         ) : item.type === "image_url" ? (
-                          <img
-                            src={item.image_url.url}
-                            alt="Pasted image"
-                            style={{ maxWidth: "100%", height: "auto", borderRadius: "8px" }}
-                          />
+                          <ImageWithResize imageUrl={item.image_url.url} />
                         ) : null}
                       </div>
                     ))
@@ -574,6 +727,31 @@ const MessageItem: React.FC<{
             <Button size="sm" variant="danger" onClick={handleDelete}>
               Delete
             </Button>
+            {imageIndexes.map((imageIndex) => (
+              <React.Fragment key={imageIndex}>
+                <Button
+                  size="sm"
+                  variant="success"
+                  onClick={() => {
+                    const item = (message.content as Array<{type: 'text', text: string} | {type: 'image_url', image_url: {url: string}}>)[imageIndex]
+                    if (item.type === "image_url") {
+                      handleShrinkImage(imageIndex, item.image_url.url)
+                    }
+                  }}
+                >
+                  Shrink 50%
+                </Button>
+                {imageUndoUrls[imageIndex] && (
+                  <Button
+                    size="sm"
+                    variant="warning"
+                    onClick={() => handleUndoImage(imageIndex)}
+                  >
+                    Undo
+                  </Button>
+                )}
+              </React.Fragment>
+            ))}
           </div>
         </div>
       </div>
@@ -592,6 +770,10 @@ const SettingsModal: React.FC<{
   apiKey: string
   setApiKey: React.Dispatch<React.SetStateAction<string>>
   onPresetIndexChange: (index: number) => void
+  onExportChats: () => void
+  onImportChats: (file: File) => void
+  onExportPresets: () => void
+  onImportPresets: (file: File) => void
 }> = ({
   show,
   onHide,
@@ -602,9 +784,31 @@ const SettingsModal: React.FC<{
   apiKey,
   setApiKey,
   onPresetIndexChange,
+  onExportChats,
+  onImportChats,
+  onExportPresets,
+  onImportPresets,
 }) => {
   const [selectedPresetIndex, setSelectedPresetIndex] =
     useState(activePresetIndex)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const presetFileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file) {
+      onImportChats(file)
+      event.target.value = "" // Reset input
+    }
+  }
+
+  const handlePresetFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file) {
+      onImportPresets(file)
+      event.target.value = "" // Reset input
+    }
+  }
   const selectedPreset = presets[selectedPresetIndex]
   const selectedModel = models.find((m) => m.id === selectedPreset?.modelId)
 
@@ -645,6 +849,56 @@ const SettingsModal: React.FC<{
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="Enter your OpenRouter API key"
             />
+          </Form.Group>
+
+          <Form.Group className="mb-3">
+            <Form.Label>Chat Data</Form.Label>
+            <div className="d-flex gap-2">
+              <Button variant="outline-primary" onClick={onExportChats}>
+                Export All Chats
+              </Button>
+              <Button
+                variant="outline-primary"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                Import Chats
+              </Button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                accept=".json"
+                style={{ display: "none" }}
+              />
+            </div>
+            <Form.Text className="text-muted">
+              Export all chats to a JSON file or import chats from a previously exported file
+            </Form.Text>
+          </Form.Group>
+
+          <Form.Group className="mb-3">
+            <Form.Label>Preset Data</Form.Label>
+            <div className="d-flex gap-2">
+              <Button variant="outline-primary" onClick={onExportPresets}>
+                Export Presets
+              </Button>
+              <Button
+                variant="outline-primary"
+                onClick={() => presetFileInputRef.current?.click()}
+              >
+                Import Presets
+              </Button>
+              <input
+                type="file"
+                ref={presetFileInputRef}
+                onChange={handlePresetFileSelect}
+                accept=".json"
+                style={{ display: "none" }}
+              />
+            </div>
+            <Form.Text className="text-muted">
+              Export all presets to a JSON file or import presets from a previously exported file
+            </Form.Text>
           </Form.Group>
 
           <div className="d-flex gap-2 mb-3 overflow-auto">
@@ -933,6 +1187,7 @@ const ChatArea: React.FC<{
   presets: Preset[]
   onUpdateMessage: (messageId: string, content: string) => void
   onDeleteMessage: (messageId: string) => void
+  onResizeImage: (messageId: string, imageIndex: number, newUrl: string) => void
   onSendMessage: (content: string) => void
   onStopMessage: () => void
   onPresetSelect: (index: number) => void
@@ -946,6 +1201,7 @@ const ChatArea: React.FC<{
   presets,
   onUpdateMessage,
   onDeleteMessage,
+  onResizeImage,
   onSendMessage,
   onStopMessage,
   onPresetSelect,
@@ -1066,6 +1322,7 @@ const ChatArea: React.FC<{
             onDeleteMessage={onDeleteMessage}
             onCopyMessage={handleCopyMessage}
             onUpdateMessage={onUpdateMessage}
+            onResizeImage={onResizeImage}
             isStreaming={isStreaming}
           />
         ))}
@@ -1234,6 +1491,23 @@ function App() {
   // Track last activity time for streaming timeout
   const lastStreamActivityRef = useRef<number>(0)
 
+  // Refs to avoid stale closures and unnecessary re-renders
+  const activeChatRef = useRef<Chat | null>(null)
+  activeChatRef.current = activeChat
+  const activeChatIdRef = useRef<string | null>(null)
+  activeChatIdRef.current = activeChatId
+  const chatMetadatasRef = useRef<ChatMetadata[]>([])
+  chatMetadatasRef.current = chatMetadatas
+  const apiKeyRef = useRef<string>("")
+  apiKeyRef.current = apiKey
+  const presetsRef = useRef<Preset[]>([])
+  presetsRef.current = presets
+  const abortControllerRef = useRef<AbortController | null>(null)
+  abortControllerRef.current = abortController
+
+  // Track whether reasoning message has been created during current streaming
+  const reasoningCreatedRef = useRef(false)
+
   // Load data from indexedDB on mount
   useEffect(() => {
     const loadData = async () => {
@@ -1323,6 +1597,26 @@ function App() {
     }
   }, [presets])
 
+  // Sync chat metadata when active chat structural properties change
+  useEffect(() => {
+    if (activeChat) {
+      const chatId = activeChat.id
+      const chatName = activeChat.name
+      const msgCount = activeChat.messages.length
+      setChatMetadatas(prev => {
+        const existingMeta = prev.find(m => m.id === chatId)
+        if (existingMeta && existingMeta.name === chatName && existingMeta.messageCount === msgCount) {
+          return prev
+        }
+        return prev.map(meta =>
+          meta.id === chatId
+            ? { ...meta, name: chatName, messageCount: msgCount, lastModified: Date.now() }
+            : meta
+        )
+      })
+    }
+  }, [activeChat?.id, activeChat?.name, activeChat?.messages.length])
+
   // Fetch models on mount
   useEffect(() => {
     const fetchModels = async () => {
@@ -1356,11 +1650,11 @@ function App() {
   }, [presets.length])
 
   const handleSelectChat = useCallback(async (chatId: string) => {
-    if (chatId === activeChatId) return
+    if (chatId === activeChatIdRef.current) return
 
     // Save current chat before switching
-    if (activeChat) {
-      await setItem(`ORI_chat_${activeChat.id}`, activeChat)
+    if (activeChatRef.current) {
+      await setItem(`ORI_chat_${activeChatRef.current.id}`, activeChatRef.current)
     }
 
     // Load new chat
@@ -1369,13 +1663,13 @@ function App() {
       setActiveChat(chat)
       setActiveChatId(chatId)
     }
-  }, [activeChat, activeChatId])
+  }, [])
 
   const handleCreateNewChat = useCallback(() => {
-    const currentPresetIndex = activeChat?.activePresetIndex || 0
+    const currentPresetIndex = activeChatRef.current?.activePresetIndex || 0
     const newChat: Chat = {
       id: uuidv4(),
-      name: `Chat ${chatMetadatas.length + 1}`,
+      name: `Chat ${chatMetadatasRef.current.length + 1}`,
       messages: [],
       activePresetIndex: currentPresetIndex,
       created: Date.now(),
@@ -1396,7 +1690,7 @@ function App() {
 
     // Save immediately
     setItem(`ORI_chat_${newChat.id}`, newChat)
-  }, [activeChat?.activePresetIndex, chatMetadatas.length])
+  }, [])
 
   const handleRenameChat = useCallback((chatId: string, newName: string) => {
     // Update metadata
@@ -1407,10 +1701,8 @@ function App() {
     )
 
     // Update active chat if it's the one being renamed
-    if (activeChat && activeChat.id === chatId) {
-      setActiveChat(prev => prev ? { ...prev, name: newName } : null)
-    }
-  }, [activeChat])
+    setActiveChat(prev => prev && prev.id === chatId ? { ...prev, name: newName } : prev)
+  }, [])
 
   const handleDeleteChat = useCallback(async (chatId: string) => {
     // Delete from IndexedDB
@@ -1420,19 +1712,23 @@ function App() {
     setChatMetadatas(prev => prev.filter(meta => meta.id !== chatId))
 
     // If deleting active chat, load another
-    if (activeChatId === chatId) {
-      const remainingChats = chatMetadatas.filter(meta => meta.id !== chatId)
+    if (activeChatIdRef.current === chatId) {
+      const remainingChats = chatMetadatasRef.current.filter(meta => meta.id !== chatId)
       if (remainingChats.length > 0) {
         const newest = remainingChats.reduce((newest, current) =>
           current.created > newest.created ? current : newest
         )
-        await handleSelectChat(newest.id)
+        const chat = await loadChat(newest.id)
+        if (chat) {
+          setActiveChat(chat)
+          setActiveChatId(chat.id)
+        }
       } else {
         setActiveChat(null)
         setActiveChatId(null)
       }
     }
-  }, [activeChatId, chatMetadatas, handleSelectChat])
+  }, [])
 
   const updateChatMetadata = useCallback((chatId: string, updates: Partial<ChatMetadata>) => {
     setChatMetadatas(prev =>
@@ -1445,85 +1741,58 @@ function App() {
   }, [])
 
   const handleDeleteMessage = useCallback((messageId: string) => {
-    if (!activeChat) return
-
     setActiveChat(prev => {
       if (!prev) return null
-      const updatedChat = {
+      return {
         ...prev,
         messages: prev.messages.filter(msg => msg.id !== messageId)
       }
-
-      // Update metadata
-      updateChatMetadata(prev.id, { messageCount: updatedChat.messages.length })
-
-      return updatedChat
     })
-  }, [activeChat, updateChatMetadata])
+  }, [])
 
   const handleUpdateMessage = useCallback((messageId: string, content: string) => {
-    if (!activeChat) return
-
     setActiveChat(prev => {
       if (!prev) return null
-      const updatedChat = {
+      return {
         ...prev,
         messages: prev.messages.map(msg =>
           msg.id === messageId ? { ...msg, content } : msg
         )
       }
-
-      // Update metadata
-      updateChatMetadata(prev.id, {})
-
-      return updatedChat
     })
-  }, [activeChat, updateChatMetadata])
+  }, [])
 
   const handlePresetSelect = useCallback((index: number) => {
-    if (!activeChat) return
     setActiveChat(prev => prev ? { ...prev, activePresetIndex: index } : null)
-  }, [activeChat])
+  }, [])
 
   const handleAppendMessage = useCallback((content: string) => {
-    if (!activeChat) return
-
-    const lastMessage = activeChat.messages[activeChat.messages.length - 1]
-    const newRole = !lastMessage || lastMessage.role === "assistant" ? "user" : "assistant"
-
-    const newMessage: Message = {
-      id: uuidv4(),
-      role: newRole,
-      content: content,
-      messageType: "regular",
-    }
-
     setActiveChat(prev => {
       if (!prev) return null
+
+      const lastMessage = prev.messages[prev.messages.length - 1]
+      const newRole = !lastMessage || lastMessage.role === "assistant" ? "user" : "assistant"
+
+      const newMessage: Message = {
+        id: uuidv4(),
+        role: newRole,
+        content: content,
+        messageType: "regular",
+      }
 
       const updatedName = content && newRole === "user" && hasDefaultName(prev)
         ? content.trim().substring(0, 20)
         : prev.name
 
-      const updatedChat = {
+      return {
         ...prev,
         messages: [...prev.messages, newMessage],
         name: updatedName
       }
-
-      // Update metadata
-      updateChatMetadata(prev.id, {
-        name: updatedName,
-        messageCount: updatedChat.messages.length
-      })
-
-      return updatedChat
     })
-  }, [activeChat, updateChatMetadata])
+  }, [])
 
   const handleImagePaste = useCallback((imageMessage: Message) => {
-    if (!activeChat) return
-
     setActiveChat(prev => {
       if (!prev) return null
 
@@ -1535,39 +1804,254 @@ function App() {
         updatedMessages.push(imageMessage)
       }
 
-      const updatedChat = {
+      return {
         ...prev,
         messages: updatedMessages
       }
-
-      // Update metadata
-      updateChatMetadata(prev.id, { messageCount: updatedChat.messages.length })
-
-      return updatedChat
     })
-  }, [activeChat, updateChatMetadata])
+  }, [])
+
+  const handleResizeImage = useCallback((messageId: string, imageIndex: number, newUrl: string) => {
+    setActiveChat(prev => {
+      if (!prev) return null
+      return {
+        ...prev,
+        messages: prev.messages.map(msg => {
+          if (msg.id !== messageId || !Array.isArray(msg.content)) return msg
+          const newContent = msg.content.map((item, index) =>
+            index === imageIndex && item.type === "image_url"
+              ? { type: "image_url" as const, image_url: { url: newUrl } }
+              : item
+          )
+          return { ...msg, content: newContent }
+        })
+      }
+    })
+  }, [])
 
   const handleStopMessage = useCallback(() => {
-    if (abortController) {
-      abortController.abort()
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
       setAbortController(null)
       setIsStreaming(false)
       setIsLoading(false)
     }
-  }, [abortController])
+  }, [])
+
+  const handleExportChats = useCallback(async () => {
+    try {
+      const allChats: Chat[] = []
+      for (const meta of chatMetadatas) {
+        const chat = await loadChat(meta.id)
+        if (chat) {
+          allChats.push(chat)
+        }
+      }
+
+      const exportData = {
+        version: 1,
+        exportDate: new Date().toISOString(),
+        chats: allChats,
+        metadata: chatMetadatas,
+      }
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `openrouter-chats-${new Date().toISOString().split("T")[0]}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error("Failed to export chats:", error)
+      alert("Failed to export chats")
+    }
+  }, [chatMetadatas])
+
+  const handleExportPresets = useCallback(() => {
+    try {
+      const exportData = {
+        version: 1,
+        exportDate: new Date().toISOString(),
+        presets,
+      }
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `openrouter-presets-${new Date().toISOString().split("T")[0]}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error("Failed to export presets:", error)
+      alert("Failed to export presets")
+    }
+  }, [presets])
+
+  const handleImportPresets = useCallback(async (file: File) => {
+    try {
+      const text = await file.text()
+      const importData = JSON.parse(text)
+
+      if (!importData.presets || !Array.isArray(importData.presets)) {
+        throw new Error("Invalid import file format")
+      }
+
+      const importedPresets: Preset[] = importData.presets
+
+      // Ensure we have exactly 16 presets
+      let finalPresets: Preset[]
+      if (importedPresets.length >= 16) {
+        finalPresets = importedPresets.slice(0, 16)
+      } else {
+        const defaultModelId = models[0]?.id || ""
+        const additionalPresets = Array.from(
+          { length: 16 - importedPresets.length },
+          (_, i) => ({
+            name: `Preset ${importedPresets.length + i + 1}`,
+            modelId: defaultModelId,
+            systemPrompt: "",
+            temperature: 0.0,
+            topP: 1.0,
+            maxTokens: 0,
+            reasoningEffort: "none" as const,
+            reasoningMaxTokens: 0,
+            reasoningExclude: false,
+            providerMode: "default" as const,
+            providerOrder: "",
+            providerOnly: "",
+            providerIgnore: "",
+            providerSort: "price" as const,
+            allowFallbacks: true,
+          })
+        )
+        finalPresets = [...importedPresets, ...additionalPresets]
+      }
+
+      setPresets(finalPresets)
+      alert(`Successfully imported ${importedPresets.length} preset(s)`)
+    } catch (error) {
+      console.error("Failed to import presets:", error)
+      alert("Failed to import presets. Please check the file format.")
+    }
+  }, [models])
+
+  const handleImportChats = useCallback(async (file: File) => {
+    try {
+      const text = await file.text()
+      const importData = JSON.parse(text)
+
+      if (!importData.chats || !Array.isArray(importData.chats)) {
+        throw new Error("Invalid import file format")
+      }
+
+      const importedChats: Chat[] = importData.chats
+      const newMetadatas: ChatMetadata[] = []
+
+      for (const chat of importedChats) {
+        // Generate new IDs to avoid conflicts
+        const newId = uuidv4()
+        const newChat: Chat = {
+          ...chat,
+          id: newId,
+          messages: chat.messages.map((msg: Message) => ({
+            ...msg,
+            id: uuidv4(),
+          })),
+        }
+
+        await setItem(`ORI_chat_${newId}`, newChat)
+
+        newMetadatas.push({
+          id: newId,
+          name: chat.name,
+          created: chat.created || Date.now(),
+          messageCount: chat.messages.length,
+          lastModified: Date.now(),
+        })
+      }
+
+      setChatMetadatas(prev => [...prev, ...newMetadatas])
+      alert(`Successfully imported ${importedChats.length} chat(s)`)
+    } catch (error) {
+      console.error("Failed to import chats:", error)
+      alert("Failed to import chats. Please check the file format.")
+    }
+  }, [])
+
+  const handleOpenSettings = useCallback(() => {
+    setShowSettingsModal(true)
+  }, [])
+
+  const handleSearchChats = useCallback(async (query: string): Promise<Set<string>> => {
+    const matchingIds = new Set<string>()
+    const lowerQuery = query.toLowerCase()
+
+    // First check chat names (fast, no IndexedDB load needed)
+    for (const meta of chatMetadatasRef.current) {
+      if (meta.name.toLowerCase().includes(lowerQuery)) {
+        matchingIds.add(meta.id)
+      }
+    }
+
+    // Then search through chat messages (slow — loads each chat from IndexedDB)
+    for (const meta of chatMetadatasRef.current) {
+      if (matchingIds.has(meta.id)) continue
+
+      const chat = await loadChat(meta.id)
+      if (chat) {
+        for (const msg of chat.messages) {
+          const textContent =
+            typeof msg.content === "string"
+              ? msg.content
+              : msg.content
+                  .filter(
+                    (item): item is { type: "text"; text: string } =>
+                      item.type === "text"
+                  )
+                  .map((item) => item.text)
+                  .join(" ")
+
+          if (textContent.toLowerCase().includes(lowerQuery)) {
+            matchingIds.add(meta.id)
+            break
+          }
+          if (msg.reasoning?.toLowerCase().includes(lowerQuery)) {
+            matchingIds.add(meta.id)
+            break
+          }
+        }
+      }
+    }
+
+    return matchingIds
+  }, [])
 
   const handleSendMessage = useCallback(async (content: string) => {
-    if (!activeChat || !apiKey) {
+    const currentChat = activeChatRef.current
+    const currentApiKey = apiKeyRef.current
+    const currentPresets = presetsRef.current
+
+    if (!currentChat || !currentApiKey) {
       alert("Please set your API key in settings")
       return
     }
 
     // Remove all reasoning messages before sending new message
-    const messagesWithoutReasoning = activeChat.messages.filter(
+    const messagesWithoutReasoning = currentChat.messages.filter(
       (msg) => msg.messageType !== "reasoning"
     )
 
-    const preset = presets[activeChat.activePresetIndex]
+    const preset = currentPresets[currentChat.activePresetIndex]
     const assistantMessage: Message = {
       id: uuidv4(),
       role: "assistant",
@@ -1591,32 +2075,29 @@ function App() {
     }
 
     // Update chat name if it has a default name and this is a user message
-    let updatedChatName = activeChat.name
-    if (content && hasDefaultName(activeChat)) {
+    let updatedChatName = currentChat.name
+    if (content && hasDefaultName(currentChat)) {
       updatedChatName = content.trim().substring(0, 20)
     }
 
     const updatedChat = {
-      ...activeChat,
+      ...currentChat,
       messages: updatedMessages,
       name: updatedChatName
     }
 
     setActiveChat(updatedChat)
 
-    // Update metadata
-    updateChatMetadata(activeChat.id, {
-      name: updatedChatName,
-      messageCount: updatedMessages.length
-    })
-
     // Initialize streaming reference
     streamingMessageRef.current = {
-      chatId: activeChat.id,
+      chatId: currentChat.id,
       messageId: assistantMessage.id,
       content: "",
       reasoning: ""
     }
+
+    // Reset reasoning creation tracker
+    reasoningCreatedRef.current = false
 
     const controller = new AbortController()
     setAbortController(controller)
@@ -1684,7 +2165,7 @@ function App() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
+            Authorization: `Bearer ${currentApiKey}`,
           },
           body: JSON.stringify(requestBody),
           signal: controller.signal,
@@ -1692,7 +2173,10 @@ function App() {
       )
 
       if (!response.ok) {
-        throw new Error(`API request failed: ${response.statusText}`)
+        const errorBody = await response.text()
+        throw new Error(
+          `API request failed: ${response.status} ${response.statusText}\n${errorBody}`
+        )
       }
 
       const reader = response.body?.getReader()
@@ -1847,15 +2331,12 @@ function App() {
               if (delta?.reasoning) {
                 accumulatedReasoning += delta.reasoning
 
-                // Create reasoning message if it doesn't exist
-                setActiveChat(prev => {
-                  if (!prev || prev.id !== streamingMessageRef.current?.chatId) return prev
+                // Create reasoning message only once per streaming session
+                if (!reasoningCreatedRef.current) {
+                  reasoningCreatedRef.current = true
+                  setActiveChat(prev => {
+                    if (!prev || prev.id !== streamingMessageRef.current?.chatId) return prev
 
-                  const existingReasoningMsg = prev.messages.find(
-                    msg => msg.messageType === "reasoning" && msg.id.startsWith("reasoning-")
-                  )
-
-                  if (!existingReasoningMsg) {
                     const reasoningMessage: Message = {
                       id: `reasoning-${uuidv4()}`,
                       role: "assistant",
@@ -1872,10 +2353,8 @@ function App() {
                     newMessages.splice(assistantIndex, 0, reasoningMessage)
 
                     return { ...prev, messages: newMessages }
-                  }
-
-                  return prev
-                })
+                  })
+                }
 
                 // Batch reasoning updates
                 if (!updateTimer) {
@@ -1910,7 +2389,9 @@ function App() {
       } else {
         console.error("Failed to send message:", error)
         alert(
-          "Failed to send message. Please check your API key and try again."
+          `Failed to send message. Please check your API key and try again.\n\n${
+            error?.message || String(error)
+          }`
         )
       }
     } finally {
@@ -1919,7 +2400,7 @@ function App() {
       setIsStreaming(false)
       setAbortController(null)
     }
-  }, [activeChat, apiKey, presets, updateChatMetadata])
+  }, [])
 
   return (
     <Container fluid className="vh-100 p-0">
@@ -1934,6 +2415,7 @@ function App() {
             onDeleteChat={handleDeleteChat}
             onNewChat={handleCreateNewChat}
             onStartRename={setRenamingChatId}
+            onSearchChats={handleSearchChats}
           />
         </Col>
         <Col xs={10} className="h-100">
@@ -1942,10 +2424,11 @@ function App() {
             presets={presets}
             onUpdateMessage={handleUpdateMessage}
             onDeleteMessage={handleDeleteMessage}
+            onResizeImage={handleResizeImage}
             onSendMessage={handleSendMessage}
             onStopMessage={handleStopMessage}
             onPresetSelect={handlePresetSelect}
-            onOpenSettings={() => setShowSettingsModal(true)}
+            onOpenSettings={handleOpenSettings}
             onAppend={handleAppendMessage}
             isLoading={isLoading}
             isStreaming={isStreaming}
@@ -1964,6 +2447,10 @@ function App() {
         apiKey={apiKey}
         setApiKey={setApiKey}
         onPresetIndexChange={handlePresetSelect}
+        onExportChats={handleExportChats}
+        onImportChats={handleImportChats}
+        onExportPresets={handleExportPresets}
+        onImportPresets={handleImportPresets}
       />
     </Container>
   )
