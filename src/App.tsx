@@ -25,26 +25,40 @@ const STORE_NAME = "settings"
 
 interface DBData {
   key: string
-  value: any
+  value: unknown
 }
+
+let dbPromise: Promise<IDBDatabase> | null = null
 
 const openDB = (): Promise<IDBDatabase> => {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
+  if (!dbPromise) {
+    dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION)
 
-    request.onerror = () => reject(request.error)
-    request.onsuccess = () => resolve(request.result)
-
-    request.onupgradeneeded = () => {
-      const db = request.result
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: "key" })
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => {
+        const db = request.result
+        db.onclose = () => {
+          dbPromise = null
+        }
+        resolve(db)
       }
-    }
-  })
+
+      request.onupgradeneeded = () => {
+        const db = request.result
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: "key" })
+        }
+      }
+    }).catch((error) => {
+      dbPromise = null
+      throw error
+    })
+  }
+  return dbPromise
 }
 
-const setItem = async (key: string, value: any): Promise<void> => {
+const setItem = async (key: string, value: unknown): Promise<void> => {
   const db = await openDB()
   const transaction = db.transaction([STORE_NAME], "readwrite")
   const store = transaction.objectStore(STORE_NAME)
@@ -55,13 +69,14 @@ const setItem = async (key: string, value: any): Promise<void> => {
   })
 }
 
-const getItem = async (key: string): Promise<any> => {
+const getItem = async <T,>(key: string): Promise<T | undefined> => {
   const db = await openDB()
   const transaction = db.transaction([STORE_NAME], "readonly")
   const store = transaction.objectStore(STORE_NAME)
   return new Promise((resolve, reject) => {
     const request = store.get(key)
-    request.onsuccess = () => resolve(request.result?.value)
+    request.onsuccess = () =>
+      resolve((request.result as DBData | undefined)?.value as T | undefined)
     request.onerror = () => reject(request.error)
   })
 }
@@ -91,10 +106,14 @@ interface ModelInfo {
   created: number
 }
 
+type MessageContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+
 interface Message {
   id: string
   role: "user" | "assistant" | "system"
-  content: string | Array<{type: 'text', text: string} | {type: 'image_url', image_url: {url: string}}>
+  content: string | MessageContentPart[]
   reasoning?: string
   messageType?: "reasoning" | "regular"
 }
@@ -137,42 +156,198 @@ interface Preset {
 const CHAT_METADATA_KEY = "ORI_chat_metadata"
 
 // Helper functions
-const createDefaultPresets = (defaultModelId: string): Preset[] => {
-  return Array.from({ length: 16 }, (_, i) => ({
-    name: `Preset ${i + 1}`,
-    modelId: defaultModelId,
-    systemPrompt: "",
-    temperature: 0.0,
-    topP: 1.0,
-    maxTokens: 0,
-    reasoningEffort: "none",
-    reasoningMaxTokens: 0,
-    reasoningExclude: false,
-    providerMode: "default",
-    providerOrder: "",
-    providerOnly: "",
-    providerIgnore: "",
-    providerSort: "price",
-    allowFallbacks: true,
-  }))
+const PRESET_COUNT = 16
+
+const createPreset = (index: number, modelId: string): Preset => ({
+  name: `Preset ${index + 1}`,
+  modelId,
+  systemPrompt: "",
+  temperature: 0.0,
+  topP: 1.0,
+  maxTokens: 0,
+  reasoningEffort: "none",
+  reasoningMaxTokens: 0,
+  reasoningExclude: false,
+  providerMode: "default",
+  providerOrder: "",
+  providerOnly: "",
+  providerIgnore: "",
+  providerSort: "price",
+  allowFallbacks: true,
+})
+
+const createDefaultPresets = (defaultModelId: string): Preset[] =>
+  Array.from({ length: PRESET_COUNT }, (_, i) => createPreset(i, defaultModelId))
+
+const padPresets = (presets: Preset[], defaultModelId: string): Preset[] => {
+  if (presets.length >= PRESET_COUNT) return presets.slice(0, PRESET_COUNT)
+  return [
+    ...presets,
+    ...Array.from({ length: PRESET_COUNT - presets.length }, (_, i) =>
+      createPreset(presets.length + i, defaultModelId)
+    ),
+  ]
+}
+
+const getMessageText = (message: Message): string => {
+  if (message.messageType === "reasoning") return message.reasoning || ""
+  if (typeof message.content === "string") return message.content
+  return message.content
+    .filter((item): item is { type: "text"; text: string } => item.type === "text")
+    .map((item) => item.text)
+    .join("\n")
+}
+
+const todayStamp = (): string => new Date().toISOString().split("T")[0]
+
+const downloadJson = (filename: string, data: unknown): void => {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: "application/json",
+  })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  URL.revokeObjectURL(url)
 }
 
 const hasDefaultName = (chat: Chat | ChatMetadata): boolean => {
   return /^Chat \d+$/.test(chat.name)
 }
 
-const imageToBase64 = (file: File): Promise<string> => {
+const blobToDataUrl = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(file)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(blob)
   })
+}
+
+const imageToBase64 = (file: File): Promise<string> => blobToDataUrl(file)
+
+const dataUrlToBlob = (dataUrl: string): Blob => {
+  const commaIndex = dataUrl.indexOf(",")
+  const header = dataUrl.slice(0, commaIndex)
+  const mime = /:(.*?)[;,]/.exec(header)?.[1] || "image/png"
+  const binary = atob(dataUrl.slice(commaIndex + 1))
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new Blob([bytes], { type: mime })
+}
+
+type Canvas2DContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
+
+// Chrome/Safari do not throw when a canvas backing store cannot be allocated:
+// drawImage() silently no-ops and the encoder hands back a fully transparent
+// image (or the string "data:,"). Sparse-sample the result so a failed resize
+// never overwrites the original with a blank image.
+const isSurfaceBlank = (
+  ctx: Canvas2DContext,
+  width: number,
+  height: number
+): boolean => {
+  const points: Array<[number, number]> = [
+    [0, 0],
+    [width - 1, 0],
+    [0, height - 1],
+    [width - 1, height - 1],
+    [width >> 1, height >> 1],
+    [width >> 2, height >> 2],
+    [(width * 3) >> 2, (height * 3) >> 2],
+  ]
+  for (const [x, y] of points) {
+    const px = Math.min(Math.max(x, 0), width - 1)
+    const py = Math.min(Math.max(y, 0), height - 1)
+    if (ctx.getImageData(px, py, 1, 1).data[3] !== 0) return false
+  }
+  return true
+}
+
+// A genuinely transparent source would trip isSurfaceBlank, so confirm against
+// the source by averaging it into a single pixel (a 1x1 canvas always allocates).
+const isBitmapFullyTransparent = (bitmap: ImageBitmap): boolean => {
+  const canvas = document.createElement("canvas")
+  canvas.width = 1
+  canvas.height = 1
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })
+  if (!ctx) return false
+  ctx.drawImage(bitmap, 0, 0, 1, 1)
+  const alpha = ctx.getImageData(0, 0, 1, 1).data[3]
+  canvas.width = 0
+  canvas.height = 0
+  return alpha === 0
+}
+
+const drawScaled = (
+  ctx: Canvas2DContext,
+  bitmap: ImageBitmap,
+  width: number,
+  height: number
+): void => {
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = "high"
+  ctx.drawImage(bitmap, 0, 0, width, height)
+  if (isSurfaceBlank(ctx, width, height) && !isBitmapFullyTransparent(bitmap)) {
+    throw new Error("canvas produced a blank surface (canvas/GPU memory exhausted)")
+  }
+}
+
+const shrinkImageUrl = async (src: string, factor = 0.5): Promise<string> => {
+  const sourceBlob = src.startsWith("data:")
+    ? dataUrlToBlob(src)
+    : await (await fetch(src)).blob()
+
+  const bitmap = await createImageBitmap(sourceBlob)
+  try {
+    if (!bitmap.width || !bitmap.height) {
+      throw new Error("source image failed to decode")
+    }
+
+    const width = Math.max(1, Math.floor(bitmap.width * factor))
+    const height = Math.max(1, Math.floor(bitmap.height * factor))
+
+    let output: Blob | null = null
+
+    if (typeof OffscreenCanvas !== "undefined") {
+      const canvas = new OffscreenCanvas(width, height)
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })
+      if (!ctx) throw new Error("could not get a 2d context (canvas memory exhausted)")
+      drawScaled(ctx, bitmap, width, height)
+      output = await canvas.convertToBlob({ type: "image/webp", quality: 0.9 })
+    } else {
+      const canvas = document.createElement("canvas")
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })
+      if (!ctx) throw new Error("could not get a 2d context (canvas memory exhausted)")
+      try {
+        drawScaled(ctx, bitmap, width, height)
+        output = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, "image/webp", 0.9)
+        )
+      } finally {
+        canvas.width = 0
+        canvas.height = 0
+      }
+    }
+
+    if (!output || output.size < 128) {
+      throw new Error("encoding returned an empty image (canvas memory exhausted)")
+    }
+
+    return await blobToDataUrl(output)
+  } finally {
+    bitmap.close()
+  }
 }
 
 // IndexedDB operations for metadata and chats
 const getChatMetadata = async (): Promise<ChatMetadata[]> => {
-  const metadata = await getItem(CHAT_METADATA_KEY)
+  const metadata = await getItem<ChatMetadata[]>(CHAT_METADATA_KEY)
   return metadata || []
 }
 
@@ -182,8 +357,8 @@ const saveChatMetadata = async (metadata: ChatMetadata[]): Promise<void> => {
 
 const loadChat = async (chatId: string): Promise<Chat | null> => {
   try {
-    const chat = await getItem(`ORI_chat_${chatId}`)
-    return chat
+    const chat = await getItem<Chat>(`ORI_chat_${chatId}`)
+    return chat ?? null
   } catch (error) {
     console.error(`Failed to load chat ${chatId}:`, error)
     return null
@@ -267,10 +442,40 @@ const ImageWithResize: React.FC<{
     <img
       src={imageUrl}
       alt="Pasted image"
+      loading="lazy"
+      decoding="async"
       style={{ maxWidth: "100%", height: "auto", borderRadius: "8px" }}
     />
   )
 }
+
+type MarkdownCodeProps = React.HTMLAttributes<HTMLElement> & {
+  node?: unknown
+  inline?: boolean
+  className?: string
+  children?: React.ReactNode
+}
+
+const markdownComponents = {
+  code({ node, inline, className, children, ...rest }: MarkdownCodeProps) {
+    const match = /language-(\w+)/.exec(className || "")
+    return !inline && match ? (
+      <CodeBlock className={className}>
+        {String(children).replace(/\n$/, "")}
+      </CodeBlock>
+    ) : (
+      <code className={className} {...rest}>
+        {children}
+      </code>
+    )
+  },
+}
+
+const MessageMarkdown: React.FC<{ children: string }> = ({ children }) => (
+  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+    {children}
+  </ReactMarkdown>
+)
 
 // Chat History Panel Component (using metadata)
 interface ChatHistoryPanelProps {
@@ -498,28 +703,12 @@ const MessageItem: React.FC<{
   const isReasoningMessage = message.messageType === "reasoning"
   const hasImageContent = Array.isArray(message.content) && message.content.some(item => item.type === "image_url")
 
-  const getEditableContent = () => {
-    if (isReasoningMessage) {
-      return message.reasoning || ""
-    }
-    if (typeof message.content === "string") {
-      return message.content
-    }
-    if (Array.isArray(message.content)) {
-      return message.content
-        .filter(item => item.type === "text")
-        .map(item => (item as any).text)
-        .join("\n")
-    }
-    return ""
-  }
-
   const [isEditing, setIsEditing] = useState(false)
-  const [editContent, setEditContent] = useState(getEditableContent())
+  const [editContent, setEditContent] = useState(() => getMessageText(message))
 
   useEffect(() => {
     if (!isEditing) {
-      setEditContent(getEditableContent())
+      setEditContent(getMessageText(message))
     }
   }, [message.content, message.reasoning, isEditing])
 
@@ -544,34 +733,33 @@ const MessageItem: React.FC<{
     }
   }, [])
 
-  const handleShrinkImage = useCallback((imageIndex: number, imageUrl: string) => {
-    const img = new Image()
-    img.onload = () => {
-      const canvas = document.createElement("canvas")
-      canvas.width = Math.max(1, Math.floor(img.width / 2))
-      canvas.height = Math.max(1, Math.floor(img.height / 2))
-      const ctx = canvas.getContext("2d")
-      if (ctx) {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-        const resizedUrl = canvas.toDataURL("image/png")
+  const handleShrinkImage = useCallback(async (imageIndex: number, imageUrl: string) => {
+    try {
+      const resizedUrl = await shrinkImageUrl(imageUrl, 0.5)
 
-        if (imageUndoTimersRef.current[imageIndex]) {
-          clearTimeout(imageUndoTimersRef.current[imageIndex])
-        }
-        setImageUndoUrls(prev => ({ ...prev, [imageIndex]: imageUrl }))
-        onResizeImage(message.id, imageIndex, resizedUrl)
-
-        imageUndoTimersRef.current[imageIndex] = setTimeout(() => {
-          setImageUndoUrls(prev => {
-            const next = { ...prev }
-            delete next[imageIndex]
-            return next
-          })
-          delete imageUndoTimersRef.current[imageIndex]
-        }, 5000)
+      if (imageUndoTimersRef.current[imageIndex]) {
+        clearTimeout(imageUndoTimersRef.current[imageIndex])
       }
+      setImageUndoUrls(prev => ({ ...prev, [imageIndex]: imageUrl }))
+      onResizeImage(message.id, imageIndex, resizedUrl)
+
+      imageUndoTimersRef.current[imageIndex] = setTimeout(() => {
+        setImageUndoUrls(prev => {
+          const next = { ...prev }
+          delete next[imageIndex]
+          return next
+        })
+        delete imageUndoTimersRef.current[imageIndex]
+      }, 5000)
+    } catch (error) {
+      // The original image is deliberately left untouched on failure.
+      console.error("Failed to shrink image:", error)
+      alert(
+        `Could not shrink this image: ${
+          error instanceof Error ? error.message : String(error)
+        }\n\nReload the tab (or open a smaller chat first) and try again.`
+      )
     }
-    img.src = imageUrl
   }, [onResizeImage, message.id])
 
   const handleUndoImage = useCallback((imageIndex: number) => {
@@ -647,7 +835,7 @@ const MessageItem: React.FC<{
                         handleEdit(editContent)
                         setIsEditing(false)
                       } else if (e.key === "Escape") {
-                        setEditContent(typeof message.content === "string" ? message.content : "")
+                        setEditContent(getMessageText(message))
                         setIsEditing(false)
                       }
                     }}
@@ -667,54 +855,18 @@ const MessageItem: React.FC<{
                     message.content.map((item, index) => (
                       <div key={index} className="mb-2">
                         {item.type === "text" ? (
-                          <ReactMarkdown
-                            remarkPlugins={[remarkGfm]}
-                            components={{
-                              code(props: any) {
-                                const { node, inline, className, children, ...rest } = props
-                                const match = /language-(\w+)/.exec(className || "")
-                                return !inline && match ? (
-                                  <CodeBlock className={className}>
-                                    {String(children).replace(/\n$/, "")}
-                                  </CodeBlock>
-                                ) : (
-                                  <code className={className} {...rest}>
-                                    {children}
-                                  </code>
-                                )
-                              },
-                            }}
-                          >
-                            {item.text}
-                          </ReactMarkdown>
+                          <MessageMarkdown>{item.text}</MessageMarkdown>
                         ) : item.type === "image_url" ? (
                           <ImageWithResize imageUrl={item.image_url.url} />
                         ) : null}
                       </div>
                     ))
                   ) : (
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        code(props: any) {
-                          const { node, inline, className, children, ...rest } = props
-                          const match = /language-(\w+)/.exec(className || "")
-                          return !inline && match ? (
-                            <CodeBlock className={className}>
-                              {String(children).replace(/\n$/, "")}
-                            </CodeBlock>
-                          ) : (
-                            <code className={className} {...rest}>
-                              {children}
-                            </code>
-                          )
-                        },
-                      }}
-                    >
+                    <MessageMarkdown>
                       {isReasoningMessage
                         ? message.reasoning || ""
-                        : message.content as string}
-                    </ReactMarkdown>
+                        : (message.content as string)}
+                    </MessageMarkdown>
                   )}
                 </div>
               )}
@@ -733,9 +885,9 @@ const MessageItem: React.FC<{
                   size="sm"
                   variant="success"
                   onClick={() => {
-                    const item = (message.content as Array<{type: 'text', text: string} | {type: 'image_url', image_url: {url: string}}>)[imageIndex]
+                    const item = (message.content as MessageContentPart[])[imageIndex]
                     if (item.type === "image_url") {
-                      handleShrinkImage(imageIndex, item.image_url.url)
+                      void handleShrinkImage(imageIndex, item.image_url.url)
                     }
                   }}
                 >
@@ -1317,18 +1469,7 @@ const ChatArea: React.FC<{
   }, [])
 
   const handleCopyMessage = useCallback((message: Message) => {
-    let textToCopy = ""
-    if (message.messageType === "reasoning") {
-      textToCopy = message.reasoning || ""
-    } else if (typeof message.content === "string") {
-      textToCopy = message.content
-    } else {
-      textToCopy = message.content
-        .filter(item => item.type === "text")
-        .map(item => (item as any).text)
-        .join("\n")
-    }
-    navigator.clipboard.writeText(textToCopy)
+    navigator.clipboard.writeText(getMessageText(message))
   }, [])
 
   if (!chat) {
@@ -1550,9 +1691,9 @@ function App() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const savedApiKey = await getItem("ORI_apiKey")
+        const savedApiKey = await getItem<string>("ORI_apiKey")
         const savedMetadata = await getChatMetadata()
-        const savedPresets = await getItem("ORI_presets")
+        const savedPresets = await getItem<Preset[]>("ORI_presets")
 
         if (savedApiKey) setApiKey(savedApiKey)
 
@@ -1571,30 +1712,8 @@ function App() {
           }
         }
 
-        if (savedPresets) {
-          // Ensure we always have 16 presets
-          if (savedPresets.length < 16) {
-            const additionalPresets = Array.from({ length: 16 - savedPresets.length }, (_, i) => ({
-              name: `Preset ${savedPresets.length + i + 1}`,
-              modelId: "",
-              systemPrompt: "",
-              temperature: 0.0,
-              topP: 1.0,
-              maxTokens: 0,
-              reasoningEffort: "none" as const,
-              reasoningMaxTokens: 0,
-              reasoningExclude: false,
-              providerMode: "default" as const,
-              providerOrder: "",
-              providerOnly: "",
-              providerIgnore: "",
-              providerSort: "price" as const,
-              allowFallbacks: true,
-            }))
-            setPresets([...savedPresets, ...additionalPresets])
-          } else {
-            setPresets(savedPresets)
-          }
+        if (savedPresets && savedPresets.length > 0) {
+          setPresets(padPresets(savedPresets, ""))
         }
       } catch (error) {
         console.error("Failed to load data from IndexedDB:", error)
@@ -1660,14 +1779,12 @@ function App() {
     const fetchModels = async () => {
       try {
         const response = await fetch("https://openrouter.ai/api/v1/models")
-        const data = await response.json()
-        const sortedModels = data.data.sort(
-          (a: ModelInfo, b: ModelInfo) => b.created - a.created
-        )
+        const data: { data: ModelInfo[] } = await response.json()
+        const sortedModels = [...data.data].sort((a, b) => b.created - a.created)
         setModels(sortedModels)
 
         // Initialize presets only if none exist and none were saved in IndexedDB
-        const savedPresets = await getItem("ORI_presets")
+        const savedPresets = await getItem<Preset[]>("ORI_presets")
         if (presets.length === 0 && !savedPresets && sortedModels.length > 0) {
           setPresets(createDefaultPresets(sortedModels[0].id))
         } else if (presets.length > 0 && sortedModels.length > 0) {
@@ -1886,24 +2003,12 @@ function App() {
         }
       }
 
-      const exportData = {
+      downloadJson(`openrouter-chats-${todayStamp()}.json`, {
         version: 1,
         exportDate: new Date().toISOString(),
         chats: allChats,
         metadata: chatMetadatas,
-      }
-
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-        type: "application/json",
       })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `openrouter-chats-${new Date().toISOString().split("T")[0]}.json`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
     } catch (error) {
       console.error("Failed to export chats:", error)
       alert("Failed to export chats")
@@ -1916,23 +2021,11 @@ function App() {
       return
     }
     try {
-      const exportData = {
+      downloadJson(`openrouter-chat-${activeChat.name}-${todayStamp()}.json`, {
         version: 1,
         exportDate: new Date().toISOString(),
         chat: activeChat,
-      }
-
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-        type: "application/json",
       })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `openrouter-chat-${activeChat.name}-${new Date().toISOString().split("T")[0]}.json`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
     } catch (error) {
       console.error("Failed to export active chat:", error)
       alert("Failed to export active chat")
@@ -1941,23 +2034,11 @@ function App() {
 
   const handleExportPresets = useCallback(() => {
     try {
-      const exportData = {
+      downloadJson(`openrouter-presets-${todayStamp()}.json`, {
         version: 1,
         exportDate: new Date().toISOString(),
         presets,
-      }
-
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-        type: "application/json",
       })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `openrouter-presets-${new Date().toISOString().split("T")[0]}.json`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
     } catch (error) {
       console.error("Failed to export presets:", error)
       alert("Failed to export presets")
@@ -1967,44 +2048,15 @@ function App() {
   const handleImportPresets = useCallback(async (file: File) => {
     try {
       const text = await file.text()
-      const importData = JSON.parse(text)
+      const importData = JSON.parse(text) as { presets?: Preset[] }
 
       if (!importData.presets || !Array.isArray(importData.presets)) {
         throw new Error("Invalid import file format")
       }
 
-      const importedPresets: Preset[] = importData.presets
+      const importedPresets = importData.presets
 
-      // Ensure we have exactly 16 presets
-      let finalPresets: Preset[]
-      if (importedPresets.length >= 16) {
-        finalPresets = importedPresets.slice(0, 16)
-      } else {
-        const defaultModelId = models[0]?.id || ""
-        const additionalPresets = Array.from(
-          { length: 16 - importedPresets.length },
-          (_, i) => ({
-            name: `Preset ${importedPresets.length + i + 1}`,
-            modelId: defaultModelId,
-            systemPrompt: "",
-            temperature: 0.0,
-            topP: 1.0,
-            maxTokens: 0,
-            reasoningEffort: "none" as const,
-            reasoningMaxTokens: 0,
-            reasoningExclude: false,
-            providerMode: "default" as const,
-            providerOrder: "",
-            providerOnly: "",
-            providerIgnore: "",
-            providerSort: "price" as const,
-            allowFallbacks: true,
-          })
-        )
-        finalPresets = [...importedPresets, ...additionalPresets]
-      }
-
-      setPresets(finalPresets)
+      setPresets(padPresets(importedPresets, models[0]?.id || ""))
       alert(`Successfully imported ${importedPresets.length} preset(s)`)
     } catch (error) {
       console.error("Failed to import presets:", error)
@@ -2122,22 +2174,8 @@ function App() {
       const chat = await loadChat(meta.id)
       if (chat) {
         for (const msg of chat.messages) {
-          const textContent =
-            typeof msg.content === "string"
-              ? msg.content
-              : msg.content
-                  .filter(
-                    (item): item is { type: "text"; text: string } =>
-                      item.type === "text"
-                  )
-                  .map((item) => item.text)
-                  .join(" ")
-
-          if (textContent.toLowerCase().includes(lowerQuery)) {
-            matchingIds.add(meta.id)
-            break
-          }
-          if (msg.reasoning?.toLowerCase().includes(lowerQuery)) {
+          const haystack = `${getMessageText(msg)}\n${msg.reasoning || ""}`
+          if (haystack.toLowerCase().includes(lowerQuery)) {
             matchingIds.add(meta.id)
             break
           }
