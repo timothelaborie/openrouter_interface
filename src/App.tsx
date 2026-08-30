@@ -772,6 +772,8 @@ const SettingsModal: React.FC<{
   onPresetIndexChange: (index: number) => void
   onExportChats: () => void
   onImportChats: (file: File) => void
+  onExportActiveChat: () => void
+  onImportActiveChat: (file: File) => void
   onExportPresets: () => void
   onImportPresets: (file: File) => void
 }> = ({
@@ -786,18 +788,29 @@ const SettingsModal: React.FC<{
   onPresetIndexChange,
   onExportChats,
   onImportChats,
+  onExportActiveChat,
+  onImportActiveChat,
   onExportPresets,
   onImportPresets,
 }) => {
   const [selectedPresetIndex, setSelectedPresetIndex] =
     useState(activePresetIndex)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const activeChatFileInputRef = useRef<HTMLInputElement>(null)
   const presetFileInputRef = useRef<HTMLInputElement>(null)
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (file) {
       onImportChats(file)
+      event.target.value = "" // Reset input
+    }
+  }
+
+  const handleActiveChatFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file) {
+      onImportActiveChat(file)
       event.target.value = "" // Reset input
     }
   }
@@ -873,6 +886,31 @@ const SettingsModal: React.FC<{
             </div>
             <Form.Text className="text-muted">
               Export all chats to a JSON file or import chats from a previously exported file
+            </Form.Text>
+          </Form.Group>
+
+          <Form.Group className="mb-3">
+            <Form.Label>Active Chat Data</Form.Label>
+            <div className="d-flex gap-2">
+              <Button variant="outline-primary" onClick={onExportActiveChat}>
+                Export Active Chat
+              </Button>
+              <Button
+                variant="outline-primary"
+                onClick={() => activeChatFileInputRef.current?.click()}
+              >
+                Import Active Chat
+              </Button>
+              <input
+                type="file"
+                ref={activeChatFileInputRef}
+                onChange={handleActiveChatFileSelect}
+                accept=".json"
+                style={{ display: "none" }}
+              />
+            </div>
+            <Form.Text className="text-muted">
+              Export the currently active chat to a JSON file or import a file to overwrite it
             </Form.Text>
           </Form.Group>
 
@@ -1872,6 +1910,35 @@ function App() {
     }
   }, [chatMetadatas])
 
+  const handleExportActiveChat = useCallback(() => {
+    if (!activeChat) {
+      alert("No active chat to export")
+      return
+    }
+    try {
+      const exportData = {
+        version: 1,
+        exportDate: new Date().toISOString(),
+        chat: activeChat,
+      }
+
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: "application/json",
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `openrouter-chat-${activeChat.name}-${new Date().toISOString().split("T")[0]}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error("Failed to export active chat:", error)
+      alert("Failed to export active chat")
+    }
+  }, [activeChat])
+
   const handleExportPresets = useCallback(() => {
     try {
       const exportData = {
@@ -1985,6 +2052,51 @@ function App() {
     } catch (error) {
       console.error("Failed to import chats:", error)
       alert("Failed to import chats. Please check the file format.")
+    }
+  }, [])
+
+  const handleImportActiveChat = useCallback(async (file: File) => {
+    const currentChatId = activeChatIdRef.current
+    if (!currentChatId) {
+      alert("No active chat to overwrite")
+      return
+    }
+    try {
+      const text = await file.text()
+      const importData = JSON.parse(text)
+
+      if (!importData.chat) {
+        throw new Error("Invalid import file format")
+      }
+
+      const importedChat: Chat = importData.chat
+      const overwrittenChat: Chat = {
+        ...importedChat,
+        id: currentChatId,
+        messages: importedChat.messages.map((msg: Message) => ({
+          ...msg,
+          id: uuidv4(),
+        })),
+      }
+
+      await setItem(`ORI_chat_${currentChatId}`, overwrittenChat)
+      setActiveChat(overwrittenChat)
+      setChatMetadatas(prev =>
+        prev.map(meta =>
+          meta.id === currentChatId
+            ? {
+                ...meta,
+                name: overwrittenChat.name,
+                messageCount: overwrittenChat.messages.length,
+                lastModified: Date.now(),
+              }
+            : meta
+        )
+      )
+      alert("Successfully imported active chat")
+    } catch (error) {
+      console.error("Failed to import active chat:", error)
+      alert("Failed to import active chat. Please check the file format.")
     }
   }, [])
 
@@ -2449,6 +2561,8 @@ function App() {
         onPresetIndexChange={handlePresetSelect}
         onExportChats={handleExportChats}
         onImportChats={handleImportChats}
+        onExportActiveChat={handleExportActiveChat}
+        onImportActiveChat={handleImportActiveChat}
         onExportPresets={handleExportPresets}
         onImportPresets={handleImportPresets}
       />
