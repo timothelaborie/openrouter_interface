@@ -214,6 +214,22 @@ const downloadJson = (filename: string, data: unknown): void => {
   URL.revokeObjectURL(url)
 }
 
+// For very large exports, concatenating everything into one JSON string before
+// creating the Blob can exceed the engine's maximum single-string allocation
+// size. Building the Blob from many smaller string parts avoids ever
+// allocating one huge contiguous string.
+const downloadJsonParts = (filename: string, parts: BlobPart[]): void => {
+  const blob = new Blob(parts, { type: "application/json" })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+  URL.revokeObjectURL(url)
+}
+
 const hasDefaultName = (chat: Chat | ChatMetadata): boolean => {
   return /^Chat \d+$/.test(chat.name)
 }
@@ -240,6 +256,10 @@ const dataUrlToBlob = (dataUrl: string): Blob => {
 }
 
 type Canvas2DContext = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
+
+interface ConvertibleOffscreenCanvas extends OffscreenCanvas {
+  convertToBlob(options?: { type?: string; quality?: number }): Promise<Blob>
+}
 
 // Chrome/Safari do not throw when a canvas backing store cannot be allocated:
 // drawImage() silently no-ops and the encoder hands back a fully transparent
@@ -313,8 +333,11 @@ const shrinkImageUrl = async (src: string, factor = 0.5): Promise<string> => {
     let output: Blob | null = null
 
     if (typeof OffscreenCanvas !== "undefined") {
-      const canvas = new OffscreenCanvas(width, height)
-      const ctx = canvas.getContext("2d", { willReadFrequently: true })
+      const canvas = new OffscreenCanvas(width, height) as ConvertibleOffscreenCanvas
+      const ctx = canvas.getContext(
+        "2d",
+        { willReadFrequently: true }
+      ) as OffscreenCanvasRenderingContext2D | null
       if (!ctx) throw new Error("could not get a 2d context (canvas memory exhausted)")
       drawScaled(ctx, bitmap, width, height)
       output = await canvas.convertToBlob({ type: "image/webp", quality: 0.9 })
@@ -1995,20 +2018,25 @@ function App() {
 
   const handleExportChats = useCallback(async () => {
     try {
-      const allChats: Chat[] = []
+      const parts: BlobPart[] = [
+        `{"version":1,"exportDate":${JSON.stringify(
+          new Date().toISOString()
+        )},"chats":[`,
+      ]
+
+      let isFirstChat = true
       for (const meta of chatMetadatas) {
         const chat = await loadChat(meta.id)
         if (chat) {
-          allChats.push(chat)
+          if (!isFirstChat) parts.push(",")
+          isFirstChat = false
+          parts.push(JSON.stringify(chat))
         }
       }
 
-      downloadJson(`openrouter-chats-${todayStamp()}.json`, {
-        version: 1,
-        exportDate: new Date().toISOString(),
-        chats: allChats,
-        metadata: chatMetadatas,
-      })
+      parts.push(`],"metadata":${JSON.stringify(chatMetadatas)}}`)
+
+      downloadJsonParts(`openrouter-chats-${todayStamp()}.json`, parts)
     } catch (error) {
       console.error("Failed to export chats:", error)
       alert("Failed to export chats")
