@@ -141,7 +141,7 @@ interface Preset {
   temperature: number
   topP: number
   maxTokens: number
-  reasoningEffort: "low" | "medium" | "high" | "none"
+  reasoningEffort: "low" | "medium" | "high" | "none" | "extra-high" | "max"
   reasoningMaxTokens: number
   reasoningExclude: boolean
   providerMode: "default" | "order" | "only" | "ignore" | "sort"
@@ -1229,6 +1229,8 @@ const SettingsModal: React.FC<{
                       <option value="low">Low</option>
                       <option value="medium">Medium</option>
                       <option value="high">High</option>
+                      <option value="extra-high">Extra High</option>
+                      <option value="max">Max</option>
                     </Form.Select>
                   </Form.Group>
                 </Col>
@@ -1409,6 +1411,7 @@ const ChatArea: React.FC<{
   isLoading: boolean
   isStreaming: boolean
   onImagePaste: (imageMessage: Message) => void
+  onImagesUpload: (imageMessages: Message[]) => void
 }> = React.memo(({
   chat,
   presets,
@@ -1423,11 +1426,13 @@ const ChatArea: React.FC<{
   isLoading,
   isStreaming,
   onImagePaste,
+  onImagesUpload,
 }) => {
   const [inputValue, setInputValue] = useState("")
   const [shouldScrollToBottom, setShouldScrollToBottom] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const imageFileInputRef = useRef<HTMLInputElement>(null)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
 
   const emojis = [
@@ -1491,6 +1496,35 @@ const ChatArea: React.FC<{
     }
   }, [])
 
+  const handleImageFilesSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    const sortedFiles = Array.from(files).sort((a, b) => a.name.localeCompare(b.name))
+
+    try {
+      const imageMessages: Message[] = await Promise.all(
+        sortedFiles.map(async (file) => {
+          const base64Image = await imageToBase64(file)
+          return {
+            id: uuidv4(),
+            role: "user",
+            content: [{
+              type: "image_url",
+              image_url: { url: base64Image },
+            }],
+            messageType: "regular",
+          } as Message
+        })
+      )
+      onImagesUpload(imageMessages)
+    } catch (error) {
+      console.error("Failed to process images:", error)
+    } finally {
+      e.target.value = ""
+    }
+  }, [onImagesUpload])
+
   const handleCopyMessage = useCallback((message: Message) => {
     navigator.clipboard.writeText(getMessageText(message))
   }, [])
@@ -1532,7 +1566,31 @@ const ChatArea: React.FC<{
       </div>
 
       <div className="d-flex gap-2 align-items-end position-absolute bottom-0 start-0 end-0 p-1">
-        <Dropdown show={showEmojiPicker} onToggle={(isOpen) => setShowEmojiPicker(isOpen)}>
+        <div className="d-flex flex-column gap-1">
+          <Button
+            variant="outline-secondary"
+            size="sm"
+            onClick={() => imageFileInputRef.current?.click()}
+            title="Upload images"
+            style={{
+              minWidth: "40px",
+              height: "38px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center"
+            }}
+          >
+            🖼️
+          </Button>
+          <input
+            type="file"
+            ref={imageFileInputRef}
+            onChange={handleImageFilesSelect}
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+          />
+          <Dropdown show={showEmojiPicker} onToggle={(isOpen) => setShowEmojiPicker(isOpen)}>
           <Dropdown.Toggle
             variant="outline-secondary"
             size="sm"
@@ -1568,6 +1626,7 @@ const ChatArea: React.FC<{
             </div>
           </Dropdown.Menu>
         </Dropdown>
+        </div>
         <Form.Control
           as="textarea"
           ref={textareaRef}
@@ -1985,6 +2044,16 @@ function App() {
       return {
         ...prev,
         messages: updatedMessages
+      }
+    })
+  }, [])
+
+  const handleImagesUpload = useCallback((imageMessages: Message[]) => {
+    setActiveChat(prev => {
+      if (!prev) return null
+      return {
+        ...prev,
+        messages: [...prev.messages, ...imageMessages]
       }
     })
   }, [])
@@ -2611,6 +2680,7 @@ function App() {
             isLoading={isLoading}
             isStreaming={isStreaming}
             onImagePaste={handleImagePaste}
+            onImagesUpload={handleImagesUpload}
           />
         </Col>
       </Row>
