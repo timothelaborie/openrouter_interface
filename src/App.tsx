@@ -12,11 +12,14 @@ import {
 } from "react-bootstrap"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import remarkMath from "remark-math"
+import rehypeKatex from "rehype-katex"
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter"
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism"
 import { v4 as uuidv4 } from "uuid"
 import debounce from "lodash.debounce"
 import "bootstrap/dist/css/bootstrap.min.css"
+import "katex/dist/katex.min.css"
 
 // IndexedDB utilities
 const DB_NAME = "OpenRouterInterfaceDB"
@@ -494,9 +497,32 @@ const markdownComponents = {
   },
 }
 
+const CODE_SPLIT_RE = /(```[\s\S]*?```|`[^`\n]+`)/
+const MATH_FENCE_RE = /^```(?:math|latex|tex)\r?\n([\s\S]*?)```$/i
+
+/** Convert \(...\) / \[...\] and ```math fences so remark-math can parse them. */
+const normalizeLatexMarkdown = (markdown: string): string =>
+  markdown
+    .split(CODE_SPLIT_RE)
+    .map((part) => {
+      if (part.startsWith("```")) {
+        const mathFence = MATH_FENCE_RE.exec(part)
+        return mathFence ? `$$\n${mathFence[1]}$$` : part
+      }
+      if (part.startsWith("`")) return part
+      return part
+        .replace(/\\\[([\s\S]*?)\\\]/g, (_m, eq: string) => `$$${eq}$$`)
+        .replace(/\\\(([\s\S]*?)\\\)/g, (_m, eq: string) => `$${eq}$`)
+    })
+    .join("")
+
 const MessageMarkdown: React.FC<{ children: string }> = ({ children }) => (
-  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-    {children}
+  <ReactMarkdown
+    remarkPlugins={[remarkGfm, remarkMath]}
+    rehypePlugins={[[rehypeKatex, { throwOnError: false }]]}
+    components={markdownComponents}
+  >
+    {normalizeLatexMarkdown(children)}
   </ReactMarkdown>
 )
 
