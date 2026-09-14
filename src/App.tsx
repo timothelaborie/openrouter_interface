@@ -495,24 +495,157 @@ const markdownComponents = {
       </code>
     )
   },
+  table({ children }: { children?: React.ReactNode }) {
+    return (
+      <div style={{ overflowX: "auto", maxWidth: "100%" }}>
+        <table
+          className="table table-sm table-bordered mb-2 mt-2"
+          style={{ backgroundColor: "rgba(255,255,255,0.95)", color: "#212529" }}
+        >
+          {children}
+        </table>
+      </div>
+    )
+  },
 }
 
 const CODE_SPLIT_RE = /(```[\s\S]*?```|`[^`\n]+`)/
 const MATH_FENCE_RE = /^```(?:math|latex|tex)\r?\n([\s\S]*?)```$/i
+const LATEX_TABLE_ENV_RE =
+  /\\begin\{(array|tabular\*?|tabularx)\}(?:\{[^{}]*\}){0,2}([\s\S]*?)\\end\{\1\}/g
+const DISPLAY_MATH_RE = /\$\$([\s\S]*?)\$\$/g
 
-/** Convert \(...\) / \[...\] and ```math fences so remark-math can parse them. */
+const stripLatexTextCommands = (value: string): string => {
+  let current = value
+  let previous = ""
+  while (current !== previous) {
+    previous = current
+    current = current
+      .replace(/\\(?:textbf|mathbf)\{([^{}]*)\}/g, "**$1**")
+      .replace(/\\(?:textit|emph|mathit)\{([^{}]*)\}/g, "*$1*")
+      .replace(/\\(?:text|textrm|mathrm|operatorname)\{([^{}]*)\}/g, "$1")
+  }
+  return current
+}
+
+const latexRowToCells = (row: string): string[] =>
+  row.split("&").map((cell) =>
+    stripLatexTextCommands(cell)
+      .replace(/\\(?:hline|toprule|midrule|bottomrule|newline)/g, "")
+      .replace(/\\cline\{[^}]*\}/g, "")
+      .replace(/~|\\,/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  )
+
+const latexTableToMarkdown = (body: string): string => {
+  const rows = body
+    .replace(/\\(?:hline|toprule|midrule|bottomrule)/g, "\\\\")
+    .split(/\\\\/)
+    .map((row) => row.trim())
+    .filter(Boolean)
+    .map(latexRowToCells)
+    .filter((cells) => cells.some((cell) => cell.length > 0))
+
+  if (rows.length === 0) return ""
+
+  const colCount = Math.max(...rows.map((row) => row.length))
+  const normalized = rows.map((row) => {
+    const next = row.slice()
+    while (next.length < colCount) next.push("")
+    return next
+  })
+
+  const format = (cells: string[]) => `| ${cells.join(" | ")} |`
+  return [
+    format(normalized[0]),
+    format(normalized[0].map(() => "---")),
+    ...normalized.slice(1).map(format),
+  ].join("\n")
+}
+
+const looksLikeTextTable = (body: string): boolean => {
+  if (/\\(?:hline|toprule|midrule|bottomrule)/.test(body)) return true
+  const pieces = body.split(/&|\\\\/).map((part) => part.trim()).filter(Boolean)
+  if (pieces.length < 4) return false
+  const textPieces = pieces.filter((part) => {
+    const words = stripLatexTextCommands(part)
+      .replace(/\\[a-zA-Z]+/g, "")
+      .split(/\s+/)
+      .filter((word) => /[A-Za-z]{3,}/.test(word))
+    return words.length >= 1
+  })
+  return textPieces.length >= pieces.length / 2
+}
+
+const convertLatexTables = (text: string): string =>
+  text.replace(LATEX_TABLE_ENV_RE, (_match, _env: string, body: string) => {
+    if (!looksLikeTextTable(body)) return _match
+    const table = latexTableToMarkdown(body)
+    return table ? `\n\n${table}\n\n` : _match
+  })
+
+const convertLooseLatexRows = (text: string): string => {
+  if (!text.includes("&") || !/\\\\|\\hline/.test(text)) return text
+  return text.replace(
+    /(?:\\hline\s*)?(?:[^\n]*&[^\n]*(?:\\\\\s*|\\hline\s*))+[^\n]*/g,
+    (block) => {
+      if (/\\begin\{/.test(block)) return block
+      const table = latexTableToMarkdown(block)
+      return table ? `\n\n${table}\n\n` : block
+    }
+  )
+}
+
+const isMostlyProse = (text: string): boolean => {
+  const trimmed = text.trim()
+  if (!trimmed) return true
+  if (/^\| .+\|/.test(trimmed) || /\n\| .+\|/.test(trimmed)) return true
+  const words = trimmed.split(/\s+/).filter((word) => /[A-Za-z]{2,}/.test(word))
+  const mathHeavy =
+    /\\(?:frac|sum|int|sqrt|prod|lim|partial|nabla|begin|alpha|beta|gamma|delta)/.test(
+      trimmed
+    )
+  return words.length >= 3 && !mathHeavy
+}
+
+const processDisplayMathBlock = (inner: string): string => {
+  let content = convertLatexTables(inner)
+  content = convertLooseLatexRows(content)
+  if (isMostlyProse(content)) {
+    return `\n\n${stripLatexTextCommands(content).trim()}\n\n`
+  }
+  return `$$\n${content.trim()}\n$$`
+}
+
+/** Convert \(...\) / \[...\] and ```math fences so remark-math can parse them.
+ *  Also turn LaTeX text tables into markdown so they are not rendered as math. */
 const normalizeLatexMarkdown = (markdown: string): string =>
   markdown
     .split(CODE_SPLIT_RE)
     .map((part) => {
       if (part.startsWith("```")) {
         const mathFence = MATH_FENCE_RE.exec(part)
-        return mathFence ? `$$\n${mathFence[1]}$$` : part
+        return mathFence ? processDisplayMathBlock(mathFence[1]) : part
       }
       if (part.startsWith("`")) return part
-      return part
-        .replace(/\\\[([\s\S]*?)\\\]/g, (_m, eq: string) => `$$${eq}$$`)
-        .replace(/\\\(([\s\S]*?)\\\)/g, (_m, eq: string) => `$${eq}$`)
+      let next = part
+        .replace(/\\\[([\s\S]*?)\\\]/g, (_m, eq: string) => `$$\n${eq}\n$$`)
+        .replace(/\\\(([\s\S]*?)\\\)/g, (_m, eq: string) => {
+          if (
+            eq.length > 80 ||
+            eq.includes("\\begin") ||
+            eq.includes("\\\\")
+          ) {
+            return `$$\n${eq}\n$$`
+          }
+          return `$${eq}$`
+        })
+      next = convertLatexTables(next)
+      next = next.replace(DISPLAY_MATH_RE, (_m, inner: string) =>
+        processDisplayMathBlock(inner)
+      )
+      return next
     })
     .join("")
 
