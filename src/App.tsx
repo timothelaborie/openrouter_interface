@@ -880,8 +880,9 @@ const MessageItem: React.FC<{
   onCopyMessage: (message: Message) => void
   onUpdateMessage: (messageId: string, content: string) => void
   onResizeImage: (messageId: string, imageIndex: number, newUrl: string) => void
+  onMoveMessage: (messageId: string, direction: "up" | "down") => void
   isStreaming: boolean
-}> = React.memo(({ message, onDeleteMessage, onCopyMessage, onUpdateMessage, onResizeImage, isStreaming }) => {
+}> = React.memo(({ message, onDeleteMessage, onCopyMessage, onUpdateMessage, onResizeImage, onMoveMessage, isStreaming }) => {
   const isReasoningMessage = message.messageType === "reasoning"
   const hasImageContent = Array.isArray(message.content) && message.content.some(item => item.type === "image_url")
 
@@ -901,6 +902,14 @@ const MessageItem: React.FC<{
   const handleCopy = useCallback(() => {
     onCopyMessage(message)
   }, [onCopyMessage, message])
+
+  const handleMoveUp = useCallback(() => {
+    onMoveMessage(message.id, "up")
+  }, [onMoveMessage, message.id])
+
+  const handleMoveDown = useCallback(() => {
+    onMoveMessage(message.id, "down")
+  }, [onMoveMessage, message.id])
 
   const handleEdit = useCallback((content: string) => {
     onUpdateMessage(message.id, content)
@@ -1061,6 +1070,28 @@ const MessageItem: React.FC<{
             <Button size="sm" variant="danger" onClick={handleDelete}>
               Delete
             </Button>
+            {hasImageContent && (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline-dark"
+                  style={{ backgroundColor: "transparent" }}
+                  onClick={handleMoveUp}
+                  title="Move up"
+                >
+                  ↑
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline-dark"
+                  style={{ backgroundColor: "transparent" }}
+                  onClick={handleMoveDown}
+                  title="Move down"
+                >
+                  ↓
+                </Button>
+              </>
+            )}
             {imageIndexes.map((imageIndex) => (
               <React.Fragment key={imageIndex}>
                 <Button
@@ -1562,6 +1593,7 @@ const ChatArea: React.FC<{
   onUpdateMessage: (messageId: string, content: string) => void
   onDeleteMessage: (messageId: string) => void
   onResizeImage: (messageId: string, imageIndex: number, newUrl: string) => void
+  onMoveMessage: (messageId: string, direction: "up" | "down") => void
   onSendMessage: (content: string) => void
   onStopMessage: () => void
   onPresetSelect: (index: number) => void
@@ -1577,6 +1609,7 @@ const ChatArea: React.FC<{
   onUpdateMessage,
   onDeleteMessage,
   onResizeImage,
+  onMoveMessage,
   onSendMessage,
   onStopMessage,
   onPresetSelect,
@@ -1718,6 +1751,7 @@ const ChatArea: React.FC<{
             onCopyMessage={handleCopyMessage}
             onUpdateMessage={onUpdateMessage}
             onResizeImage={onResizeImage}
+            onMoveMessage={onMoveMessage}
             isStreaming={isStreaming}
           />
         ))}
@@ -2232,6 +2266,21 @@ function App() {
           return { ...msg, content: newContent }
         })
       }
+    })
+  }, [])
+
+  const handleMoveMessage = useCallback((messageId: string, direction: "up" | "down") => {
+    setActiveChat(prev => {
+      if (!prev) return null
+      const index = prev.messages.findIndex(msg => msg.id === messageId)
+      if (index === -1) return prev
+      const swapIndex = direction === "up" ? index - 1 : index + 1
+      if (swapIndex < 0 || swapIndex >= prev.messages.length) return prev
+      const newMessages = [...prev.messages]
+      const temp = newMessages[index]
+      newMessages[index] = newMessages[swapIndex]
+      newMessages[swapIndex] = temp
+      return { ...prev, messages: newMessages }
     })
   }, [])
 
@@ -2831,6 +2880,7 @@ function App() {
             onUpdateMessage={handleUpdateMessage}
             onDeleteMessage={handleDeleteMessage}
             onResizeImage={handleResizeImage}
+            onMoveMessage={handleMoveMessage}
             onSendMessage={handleSendMessage}
             onStopMessage={handleStopMessage}
             onPresetSelect={handlePresetSelect}
