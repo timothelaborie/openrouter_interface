@@ -688,6 +688,14 @@ const ChatHistoryPanel = React.memo<ChatHistoryPanelProps>(({
   const [searchQuery, setSearchQuery] = useState("")
   const [searchResults, setSearchResults] = useState<Set<string> | null>(null)
   const [isSearching, setIsSearching] = useState(false)
+  const listContainerRef = useRef<HTMLDivElement>(null)
+
+  const handleNewChatClick = () => {
+    onNewChat()
+    if (listContainerRef.current) {
+      listContainerRef.current.scrollTop = 0
+    }
+  }
 
   const handleSearchClick = () => {
     if (isSearchMode) {
@@ -778,7 +786,7 @@ const ChatHistoryPanel = React.memo<ChatHistoryPanelProps>(({
           )}
         </div>
       )}
-      <div className="flex-grow-1 overflow-auto">
+      <div className="flex-grow-1 overflow-auto" ref={listContainerRef}>
         {displayedChats.map((chat) => (
           <div
             key={chat.id}
@@ -843,7 +851,7 @@ const ChatHistoryPanel = React.memo<ChatHistoryPanelProps>(({
           </div>
         ))}
       </div>
-      <Button variant="primary" className="w-100 mt-3" onClick={onNewChat}>
+      <Button variant="primary" className="w-100 mt-3" onClick={handleNewChatClick}>
         New Chat
       </Button>
     </div>
@@ -2096,6 +2104,16 @@ function App() {
   }, [])
 
   const handleCreateNewChat = useCallback(() => {
+    const sortedMetadatas = [...chatMetadatasRef.current].sort((a, b) => b.created - a.created)
+    const topChat = sortedMetadatas[0]
+
+    if (topChat && topChat.messageCount === 0) {
+      if (activeChatIdRef.current !== topChat.id) {
+        handleSelectChat(topChat.id)
+      }
+      return
+    }
+
     const currentPresetIndex = activeChatRef.current?.activePresetIndex || 0
     const newChat: Chat = {
       id: uuidv4(),
@@ -2120,7 +2138,7 @@ function App() {
 
     // Save immediately
     setItem(`ORI_chat_${newChat.id}`, newChat)
-  }, [])
+  }, [handleSelectChat])
 
   const handleRenameChat = useCallback((chatId: string, newName: string) => {
     // Update metadata
